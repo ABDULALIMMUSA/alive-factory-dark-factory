@@ -61,5 +61,10 @@ For browser fault/viewport checks, a development environment with Playwright and
 Chromium can run `browser_checks.py` with the Stage2 URL, shipped Stage1 URL and
 a screenshot output directory. These testing dependencies are not runtime dependencies.
 
+`navigation_checks.py` exercises pending writes, refusal/uncertainty recovery,
+latest queued destination, history and logout. Run it in a Playwright development
+client sharing the tested service's network namespace, with the service at
+localhost8080. The client stays outside the service CPU/memory quota.
+
 The final evidence document records actual executed tests, browser screenshots,
 resource/asset checks and exact revision. Acceptance belongs to independent seats.

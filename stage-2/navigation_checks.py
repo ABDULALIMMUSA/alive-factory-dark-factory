@@ -3,7 +3,7 @@
 Run in a Playwright client sharing only a resource-limited service's network
 namespace (localhost8080). Snapshots, credentials and tokens stay in memory.
 """
-import asyncio,json
+import asyncio,json,datetime as dt
 from urllib.request import Request,urlopen
 from playwright.async_api import async_playwright,expect
 
@@ -12,12 +12,12 @@ def fixture():
     return {'currency':'EUR','minor_units':2,'users':[
         {'id':h,'handle':h,'email':h+'@nav.invalid','password':'nav-private-password',
          'display_name':h.upper(),'balance':1000 if h=='a' else 0} for h in 'abc']}
-def setup():
-    response=urlopen(Request(BASE+'/_test/reset',json.dumps(fixture()).encode(),{'Content-Type':'application/json'}),timeout=10)
+def setup(data=None):
+    response=urlopen(Request(BASE+'/_test/reset',json.dumps(data or fixture()).encode(),{'Content-Type':'application/json'}),timeout=10)
     assert response.status==204
 
-async def session(browser):
-    setup();page=await browser.new_page()
+async def session(browser,data=None):
+    setup(data);page=await browser.new_page()
     await page.goto(BASE+'/login')
     await page.get_by_test_id('login-email').fill('a@nav.invalid')
     await page.get_by_test_id('login-password').fill('nav-private-password')
@@ -60,6 +60,30 @@ async def main():
             assert not reads and page.url==original,(kind,reads)
             release.set();await expect(page).to_have_url(BASE+{'Requests':'/requests','Reservations':'/authorizations','Wallet':'/'}[target])
             groups.append(kind+' waits before navigation');await page.close()
+        for action in ['pay','decline','cancel','capture','void']:
+            data=fixture();reservation=action in ['capture','void']
+            if reservation:
+                if action=='capture':data['users'][1]['balance']=1000
+                data['authorizations']=[{'id':'a_nav','from_user_id':'b' if action=='capture' else 'a',
+                    'to_user_id':'a' if action=='capture' else 'b','amount':100,'status':'open',
+                    'expires_at':(dt.datetime.now(dt.timezone.utc)+dt.timedelta(hours=2)).isoformat()}]
+                route='/authorizations';path=route+'/a_nav/'+action
+                button='authorization-'+action+'-a_nav'
+            else:
+                data['requests']=[{'id':'rq_nav','requester_id':'a' if action=='cancel' else 'b',
+                    'payer_id':'b' if action=='cancel' else 'a','amount':100,'status':'pending'}]
+                route='/requests';path=route+'/rq_nav/'+action;button='request-'+action+'-rq_nav'
+            page=await session(browser,data)
+            await page.get_by_role('link',name='Reservations' if reservation else 'Requests',exact=True).click()
+            await expect(page.get_by_test_id(button)).to_be_visible()
+            blocked,release,reads,bodies,handler=await pending(page,path)
+            await page.get_by_test_id(button).click();await asyncio.wait_for(blocked.wait(),5)
+            await page.get_by_role('link',name='Wallet',exact=True).click();await page.wait_for_timeout(200)
+            assert not reads and page.url==BASE+route,(action,reads)
+            release.set();await expect(page).to_have_url(BASE+'/')
+            total='900' if action=='pay' else '1100' if action=='capture' else '1000'
+            await expect(page.get_by_test_id('wallet-balance')).to_have_attribute('data-amount',total)
+            groups.append(action+' resource action waits and shows current wallet');await page.close()
         for outcome,testid in [('refused','pay-error'),('uncertain','pay-uncertain')]:
             page=await session(browser)
             await page.get_by_test_id('pay-handle').fill('b');await page.get_by_test_id('pay-amount').fill('1.00')
