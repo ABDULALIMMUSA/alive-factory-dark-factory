@@ -19,6 +19,10 @@ use integer arithmetic. Idempotency compares a tagged canonical JSON value tree,
 scoped by caller, HTTP method and path; successful responses are stored separately
 from mutable records.
 
+Signup and login compute scrypt outside the transaction lock. Account/session
+commits stay locked; login rechecks credentials if reset/import replaced state
+during password verification.
+
 Unauthenticated `POST /_test/reset` loads the specified fixture. `GET /_test/export`
 returns a portable private snapshot; `POST /_test/import` validates and replaces
 state atomically. Snapshots include hashes and tokens: keep them outside Git and
@@ -35,4 +39,10 @@ For migration checks, start a second container and pass both addresses:
 ```sh
 docker run --rm --name pocketful-stage-1-destination -e PORT=8091 -p 8091:8091 --cpus=2 --memory=2g pocketful-stage-1
 python stage-1/checks.py http://localhost:8080 http://localhost:8091
+```
+
+Additional reset type/rollback and imported retry consistency regressions:
+
+```sh
+python stage-1/repair_checks.py http://localhost:8080 http://localhost:8091
 ```

@@ -130,9 +130,22 @@ def validate_id(value):
     return value
 
 
+def fixture_id(body, key):
+    return validate_id(string(body, key))
+
+
+def fixture_integer(body, key, low, high):
+    if key not in body:
+        fail(message="Missing " + key)
+    value = body[key]
+    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
+        fail(400, "malformed_request")
+    return integer(value, low, high)
+
+
 def currency_fields(body):
     currency = string(body, "currency")
-    units = integer(body.get("minor_units"), 0, 3)
+    units = fixture_integer(body, "minor_units", 0, 3)
     if {"EUR": 2, "JPY": 0, "BHD": 3}.get(currency) != units:
         fail()
     return currency, units
@@ -180,40 +193,121 @@ def fixture_state(body):
     emails, handles = set(), set()
     for raw in array_field(body, "users"):
         raw = object_value(raw)
-        uid = validate_id(raw.get("id"))
+        uid = fixture_id(raw, "id")
         email, handle = string(raw, "email"), handle_field(raw, "handle")
         if not EMAIL.fullmatch(email) or uid in state["users"] or email in emails or handle in handles:
             fail()
         user = {"id": uid, "email": email, "display_name": string(raw, "display_name"), "handle": handle,
-                "balance": integer(raw.get("balance"), 0, MAX_BALANCE), "password_hash": password_hash(string(raw, "password"))}
+                "balance": fixture_integer(raw, "balance", 0, MAX_BALANCE), "password_hash": password_hash(string(raw, "password"))}
         state["users"][uid] = user
         emails.add(email)
         handles.add(handle)
     state["seeded_total"] = sum(user["balance"] for user in state["users"].values())
     state["operators"] = array_field(body, "settlement_operator_ids", [])
-    if any(not isinstance(uid, str) or uid not in state["users"] for uid in state["operators"]):
-        fail()
+    for uid in state["operators"]:
+        if not isinstance(uid, str):
+            fail(400, "malformed_request")
+        if validate_id(uid) not in state["users"]:
+            fail()
     timestamp = now()
     for raw in array_field(body, "payments", []):
         raw = object_value(raw)
-        pid = validate_id(raw.get("id"))
-        sender, receiver = state["users"].get(raw.get("from_user_id")), state["users"].get(raw.get("to_user_id"))
+        pid = fixture_id(raw, "id")
+        sender = state["users"].get(fixture_id(raw, "from_user_id"))
+        receiver = state["users"].get(fixture_id(raw, "to_user_id"))
         if sender is None or receiver is None or sender is receiver or pid in state["payments"]:
             fail()
         state["payments"][pid] = payment_record(state, sender, receiver, amount(raw), note(raw), visibility(raw),
                                                timestamp, payment_id=pid)
     for raw in array_field(body, "requests", []):
         raw = object_value(raw)
-        rid = validate_id(raw.get("id"))
-        requester, payer = state["users"].get(raw.get("requester_id")), state["users"].get(raw.get("payer_id"))
+        rid = fixture_id(raw, "id")
+        requester = state["users"].get(fixture_id(raw, "requester_id"))
+        payer = state["users"].get(fixture_id(raw, "payer_id"))
         status = string(raw, "status")
         if requester is None or payer is None or requester is payer or rid in state["requests"] or status not in STATUSES:
             fail()
         record = request_record(state, requester, payer, integer(raw.get("amount"), 0, 1000000000), note(raw), timestamp, rid)
         record["status"] = status
-        record["payment_id"] = raw.get("payment_id")
+        payment_id = raw.get("payment_id")
+        if payment_id is not None:
+            payment_id = fixture_id(raw, "payment_id")
+            payment = state["payments"].get(payment_id)
+            if status != "paid" or payment is None or payment["from_user_id"] != payer["id"] or payment["to_user_id"] != requester["id"] or payment["amount"] != record["amount"] or payment["note"] != record["note"] or payment["request_id"] is not None:
+                fail()
+            payment["request_id"] = rid
+        record["payment_id"] = payment_id
         state["requests"][rid] = record
     return state
+
+
+def completed_claim(state, entry, body):
+    """Match a completed original request to its immutable operation receipt.
+
+    This deliberately does not execute against current balances/request status:
+    those can change after the original successful operation.
+    """
+    actor = state["users"][entry["user_id"]]
+    response, path = entry["response"], entry["path"]
+    def expected_payment(raw, sender, receiver, record, request_id=None, settlement_id=None):
+        if sender is receiver:
+            fail()
+        return payment_record(state, sender, receiver, amount(raw), note(raw), visibility(raw),
+                              record["created_at"], request_id, settlement_id, record["payment_id"])
+    if path == "/payments":
+        receiver = user_by_handle(state, handle_field(body, "to_handle"))
+        expected = expected_payment(body, actor, receiver, response)
+        resources = [("payment", response["payment_id"])]
+    elif path == "/requests":
+        payer = user_by_handle(state, handle_field(body, "payer_handle"))
+        if actor is payer:
+            fail()
+        expected = request_record(state, actor, payer, amount(body), note(body), response["created_at"], response["request_id"])
+        resources = [("request", response["request_id"])]
+    elif re.fullmatch(r"/requests/[^/]+/pay", path):
+        rid = validate_id(path.split("/")[2])
+        request = state["requests"][rid]
+        if request["payer_id"] != actor["id"] or request["status"] != "paid" or request["payment_id"] != response["payment_id"]:
+            fail()
+        expected = payment_record(state, actor, state["users"][request["requester_id"]], request["amount"],
+                                  request["note"], visibility(body), response["created_at"], rid,
+                                  payment_id=response["payment_id"])
+        resources = [("payment", response["payment_id"])]
+    elif path == "/splits":
+        value, memo = amount(body), note(body)
+        handles = array_field(body, "participant_handles")
+        if not handles or any(not isinstance(handle, str) or not HANDLE.fullmatch(handle) for handle in handles) or len(set(handles)) != len(handles):
+            fail()
+        participants = [user_by_handle(state, handle) for handle in handles]
+        quotient, remainder = divmod(value, len(handles))
+        shares = [{"handle": handle, "amount": quotient + (i < remainder)} for i, handle in enumerate(handles)]
+        others = [(user, share) for user, share in zip(participants, shares) if user is not actor]
+        if len(response["requests"]) != len(others):
+            fail()
+        requests = [request_record(state, actor, user, share["amount"], memo, response["created_at"], record["request_id"])
+                    for (user, share), record in zip(others, response["requests"])]
+        expected = {"split_id": response["split_id"], "amount": value, "currency": state["currency"],
+                    "note": memo, "shares": shares, "requests": requests, "created_at": response["created_at"]}
+        resources = [("split", response["split_id"])] + [("request", r["request_id"]) for r in requests]
+    elif path == "/settlements":
+        if actor["id"] not in state["operators"]:
+            fail()
+        transfers = body.get("transfers")
+        if not isinstance(transfers, list) or not 1 <= len(transfers) <= 32 or len(transfers) != len(response["payments"]):
+            fail()
+        payments = []
+        for raw, record in zip(transfers, response["payments"]):
+            object_value(raw)
+            sender = user_by_handle(state, handle_field(raw, "from_handle"))
+            receiver = user_by_handle(state, handle_field(raw, "to_handle"))
+            payments.append(expected_payment(raw, sender, receiver, record, settlement_id=response["settlement_id"]))
+        expected = {"settlement_id": response["settlement_id"], "committed_at": response["committed_at"], "payments": payments}
+        resources = [("settlement", response["settlement_id"])] + [("payment", p["payment_id"]) for p in payments]
+    else:
+        fail()
+    if canonical(expected) != canonical(response):
+        fail()
+    return resources
 
 
 def validate_snapshot(body):
@@ -302,9 +396,9 @@ def validate_snapshot(body):
             if len({payment["payment_id"] for payment in settlement["payments"]}) != len(settlement["payments"]):
                 fail()
             for payment in settlement["payments"]:
-                if payment != state["payments"][payment["payment_id"]] or payment["settlement_id"] != sid or payment["request_id"] is not None or payment["created_at"] != settlement["committed_at"]:
+                if canonical(payment) != canonical(state["payments"][payment["payment_id"]]) or payment["settlement_id"] != sid or payment["request_id"] is not None or payment["created_at"] != settlement["committed_at"]:
                     fail()
-        claimed = set()
+        claimed, created_resources = set(), set()
         def canonical_tree(tree):
             if not isinstance(tree, list) or not tree or not isinstance(tree[0], str):
                 fail()
@@ -347,8 +441,19 @@ def validate_snapshot(body):
             current = state["requests"][record["request_id"]]
             if record.get("status") != "pending" or record.get("payment_id") is not None:
                 fail()
-            if {k: v for k, v in record.items() if k not in {"status", "payment_id"}} != {k: v for k, v in current.items() if k not in {"status", "payment_id"}}:
+            if canonical({k: v for k, v in record.items() if k not in {"status", "payment_id"}}) != canonical({k: v for k, v in current.items() if k not in {"status", "payment_id"}}):
                 fail()
+        def original_body(tree):
+            tag = tree[0]
+            if tag == "null":
+                return None
+            if tag == "number":
+                return Decimal(tree[1])
+            if tag == "array":
+                return [original_body(item) for item in tree[1]]
+            if tag == "object":
+                return {key: original_body(value) for key, value in tree[1]}
+            return tree[1]
         for entry in state["idempotency"]:
             identity = (entry["user_id"], entry["method"], entry["path"], entry["key"])
             if identity in claimed or entry["user_id"] not in state["users"] or entry["method"] != "POST" or not isinstance(entry["path"], str) or not isinstance(entry["key"], str) or not 1 <= len(entry["key"]) <= 255:
@@ -358,7 +463,7 @@ def validate_snapshot(body):
             canonical_tree(entry["body"])
             response, path = entry["response"], entry["path"]
             if path == "/payments" or re.fullmatch(r"/requests/[^/]+/pay", path):
-                if response != state["payments"][response["payment_id"]] or response["from_user_id"] != entry["user_id"]:
+                if canonical(response) != canonical(state["payments"][response["payment_id"]]) or response["from_user_id"] != entry["user_id"]:
                     fail()
                 if path != "/payments" and response["request_id"] != path.split("/")[2]:
                     fail()
@@ -367,7 +472,7 @@ def validate_snapshot(body):
                 if response["requester_id"] != entry["user_id"]:
                     fail()
             elif path == "/settlements":
-                if response != state["settlements"][response["settlement_id"]]:
+                if canonical(response) != canonical(state["settlements"][response["settlement_id"]]):
                     fail()
             elif path == "/splits":
                 validate_id(response["split_id"])
@@ -398,6 +503,13 @@ def validate_snapshot(body):
                         fail()
             else:
                 fail()
+            original = original_body(entry["body"])
+            if canonical(original) != entry["body"]:
+                fail()
+            resources = completed_claim(state, entry, original)
+            if len(set(resources)) != len(resources) or any(resource in created_resources for resource in resources):
+                fail()
+            created_resources.update(resources)
             claimed.add(identity)
         # Stored API responses contain only integer numbers. Restore integer-valued
         # exponent/decimal encodings too, without ever rounding fractional input.
@@ -410,7 +522,7 @@ def validate_snapshot(body):
                 return {key: native(item) for key, item in value.items()}
             return value
         return native(state)
-    except (KeyError, TypeError, ValueError, IndexError, AttributeError, OverflowError, APIError):
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError, ArithmeticError, RecursionError, APIError):
         fail()
 
 
@@ -440,6 +552,52 @@ def transfer(state, sender, receiver, value, memo, scope, request_id=None):
     return record
 
 
+def authentication(path, body):
+    """Compute password hashes outside the state lock, commit sessions inside it."""
+    email, password = string(body, "email"), string(body, "password")
+    def session(state, user, status):
+        token = secrets.token_urlsafe(32)
+        state["tokens"][token] = user["id"]
+        return status, {"user_id": user["id"], "display_name": user["display_name"], "token": token}
+    if path == "/auth/signup":
+        display = string(body, "display_name")
+        if not EMAIL.fullmatch(email) or len(password) < 8:
+            fail()
+        handle = re.sub(r"[^a-z0-9_]", "_", email.split("@", 1)[0].lower())[:20]
+        def available(state):
+            if any(u["email"] == email for u in state["users"].values()):
+                fail(409, "email_taken")
+            if any(u["handle"] == handle for u in state["users"].values()):
+                fail(409, "handle_taken")
+        with LOCK:
+            available(STATE)
+        hashed = password_hash(password)
+        with LOCK:
+            state = STATE
+            available(state)
+            uid = identifier("u_")
+            user = {"id": uid, "email": email, "display_name": display, "handle": handle, "balance": 0,
+                    "password_hash": hashed}
+            state["users"][uid] = user
+            return session(state, user, 201)
+    while True:
+        with LOCK:
+            state = STATE
+            user = next((u for u in state["users"].values() if u["email"] == email), None)
+            if user is None:
+                fail(401, "unauthenticated")
+            hashed = user["password_hash"]
+        matches = password_matches(password, hashed)
+        with LOCK:
+            # Reset/import may replace credentials while scrypt is running. Recheck
+            # the current account before issuing a token into the current state.
+            if STATE is not state or state["users"].get(user["id"]) is not user:
+                continue
+            if not matches:
+                fail(401, "unauthenticated")
+            return session(state, user, 200)
+
+
 def dispatch(method, path, query, body, authorization, key):
     global STATE
     if method == "GET" and path == "/health":
@@ -453,30 +611,6 @@ def dispatch(method, path, query, body, authorization, key):
         STATE = validate_snapshot(body)
         return 204, None
     state = STATE
-    if method == "POST" and path in {"/auth/signup", "/auth/login"}:
-        email, password = string(body, "email"), string(body, "password")
-        user = next((u for u in state["users"].values() if u["email"] == email), None)
-        if path == "/auth/signup":
-            display = string(body, "display_name")
-            if not EMAIL.fullmatch(email) or len(password) < 8:
-                fail()
-            if user is not None:
-                fail(409, "email_taken")
-            handle = re.sub(r"[^a-z0-9_]", "_", email.split("@", 1)[0].lower())[:20]
-            if any(u["handle"] == handle for u in state["users"].values()):
-                fail(409, "handle_taken")
-            uid = identifier("u_")
-            user = {"id": uid, "email": email, "display_name": display, "handle": handle, "balance": 0,
-                    "password_hash": password_hash(password)}
-            state["users"][uid] = user
-            status = 201
-        else:
-            if user is None or not password_matches(password, user["password_hash"]):
-                fail(401, "unauthenticated")
-            status = 200
-        token = secrets.token_urlsafe(32)
-        state["tokens"][token] = user["id"]
-        return status, {"user_id": user["id"], "display_name": user["display_name"], "token": token}
     match = re.fullmatch(r"Bearer ([^\s]+)", authorization or "", re.IGNORECASE)
     uid = state["tokens"].get(match[1]) if match else None
     if uid is None:
@@ -624,9 +758,12 @@ class Handler(BaseHTTPRequestHandler):
             elif self.command == "POST" and not re.fullmatch(r"/requests/[^/]+/(decline|cancel)", urlsplit(self.path).path):
                 fail(400, "malformed_request")
             url = urlsplit(self.path)
-            with LOCK:
-                status, response = dispatch(self.command, url.path, parse_qs(url.query, keep_blank_values=True), body,
-                                            self.headers.get("Authorization"), self.headers.get("Idempotency-Key"))
+            if self.command == "POST" and url.path in {"/auth/signup", "/auth/login"}:
+                status, response = authentication(url.path, body)
+            else:
+                with LOCK:
+                    status, response = dispatch(self.command, url.path, parse_qs(url.query, keep_blank_values=True), body,
+                                                self.headers.get("Authorization"), self.headers.get("Idempotency-Key"))
             encoded = b"" if response is None else json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         except APIError as error:
             status = error.status
