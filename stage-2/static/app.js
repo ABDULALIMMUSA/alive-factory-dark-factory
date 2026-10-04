@@ -1,11 +1,22 @@
 'use strict';
 const $ = (id) => document.querySelector(`[data-testid="${id}"]`);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = {token:localStorage.getItem('pocketful-token'), me:null, route:location.pathname, forms:{}, ops:new Map(), walletGeneration:0, listGeneration:0};
+const state = {token:localStorage.getItem('pocketful-token'), me:null, route:location.pathname, forms:{}, ops:new Map(), pendingWrites:new Set(), navigationGeneration:0, walletGeneration:0, listGeneration:0};
 const nav = [['/','◉','Wallet'],['/requests','↗','Requests'],['/split','▦','Split a bill'],['/authorizations','◇','Reservations']];
 class Refused extends Error { constructor(status,code,message){super(message);this.status=status;this.code=code;} }
 const messages = {insufficient_funds:'There isn’t enough available money for this. Your wallet has been refreshed.',not_found:'We couldn’t find that person or item. Check the handle and try again.',self_payment:'Choose someone else to receive this payment.',self_request:'Choose someone else to receive this request.',request_not_pending:'This request has already changed. The latest status is shown below.',authorization_expired:'This reservation has expired. Its remaining funds have been released.',authorization_not_open:'This reservation has already closed. We’ve refreshed its status.',capture_exceeds_authorization:'The capture is larger than the amount remaining in this reservation.',forbidden:'This action is available only to the permitted person.',email_taken:'That email already has an account. Try signing in.',handle_taken:'That email would create a handle that is already in use.',unauthenticated:'We couldn’t sign you in. Check your email and password.',idempotency_key_reuse:'This retry no longer matches the original action. Edit the form to start a new action.',validation_failed:'Check the amount and other details, then try again.'};
 async function api(path,method='GET',body,key){
+  if(method==='GET')return request(path,method,body,key);
+  let finish,confirmed=false;
+  const pending=new Promise(resolve=>{finish=resolve;});
+  state.pendingWrites.add(pending);
+  try{
+    const result=await request(path,method,body,key);confirmed=true;return result;
+  }finally{
+    state.pendingWrites.delete(pending);finish(confirmed);
+  }
+}
+async function request(path,method,body,key){
   const headers = {'Accept':'application/json'};
   if(state.token) headers.Authorization='Bearer '+state.token;
   if(body !== undefined) headers['Content-Type']='application/json';
@@ -52,7 +63,7 @@ function feedback(name,kind,text){
 function shell(){
   const identity=state.me?`<div class="identity"><div class="avatar">${esc(state.me.display_name.slice(0,1).toUpperCase())}</div><div class="person"><strong data-testid="current-user">${esc(state.me.display_name)}</strong><span class="handle" data-testid="current-handle">${esc(state.me.handle)}</span></div><button class="button quiet tiny" data-testid="logout-button">Sign out</button></div>`:`<div class="identity"><a class="button quiet tiny" href="/login">Sign in</a><a class="button tiny" href="/signup">Join Pocketful</a></div>`;
   document.getElementById('app').innerHTML=`<header class="topbar"><a class="brand" href="/"><span class="brandmark">p</span>Pocketful <small>Money, thoughtfully</small></a>${identity}</header><div class="shell"><aside><nav class="navigation" aria-label="Main navigation">${nav.map(([path,icon,label])=>`<a class="navlink ${state.route===path?'active':''}" href="${path}" ${state.route===path?'aria-current="page"':''}><span class="navicon" aria-hidden="true">${icon}</span>${label}</a>`).join('')}</nav><div class="sidebar-note">A little more clarity.<br>A little more peace of mind.<br><br>One wallet, everyday connections.</div></aside><main id="main"></main></div>`;
-  $('logout-button')?.addEventListener('click',()=>{localStorage.removeItem('pocketful-token');state.token=null;state.me=null;state.ops.clear();state.forms={};state.walletGeneration++;state.listGeneration++;go('/login');});
+  $('logout-button')?.addEventListener('click',()=>go('/login',{beforeNavigate:()=>{localStorage.removeItem('pocketful-token');state.token=null;state.me=null;state.ops.clear();state.forms={};}}));
   document.querySelectorAll('a[href^="/"]').forEach(link=>link.addEventListener('click',event=>{if(!event.ctrlKey&&!event.metaKey){event.preventDefault();go(link.getAttribute('href'));}}));
 }
 function heading(kicker,title,subtitle,action=''){return `<div class="heading"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p class="subtext">${subtitle}</p></div>${action}</div>`;}
@@ -204,8 +215,27 @@ async function render(){
   }
   bindFields();
 }
-function go(path){state.walletGeneration++;state.listGeneration++;state.route=path;history.pushState({},'',path);render().catch(error=>{document.getElementById('main').insertAdjacentHTML('afterbegin',`<div class="feedback error" role="alert">${esc(error.message)}</div>`);});}
-window.addEventListener('popstate',()=>{state.route=location.pathname;state.walletGeneration++;state.listGeneration++;render();});
+async function go(path,options={}){
+  const generation=++state.navigationGeneration;
+  let confirmed=true;
+  // Keep the current form and outcome visible until every pending write settles.
+  // A queued navigation after refusal/uncertainty is discarded; a later explicit
+  // navigation is still available, and unchanged retries keep their identity.
+  while(state.pendingWrites.size){
+    const outcomes=await Promise.all([...state.pendingWrites]);
+    if(outcomes.some(success=>!success))confirmed=false;
+    if(generation!==state.navigationGeneration)return;
+  }
+  if(!confirmed){
+    if(options.history==='pop')history.replaceState({},'',state.route);
+    return;
+  }
+  options.beforeNavigate?.();
+  state.walletGeneration++;state.listGeneration++;state.route=path;
+  if(options.history!=='pop')history.pushState({},'',path);
+  try{await render();}catch(error){document.getElementById('main').insertAdjacentHTML('afterbegin',`<div class="feedback error" role="alert">${esc(error.message)}</div>`);}
+}
+window.addEventListener('popstate',()=>go(location.pathname,{history:'pop'}));
 (async()=>{
   if(state.token){try{state.me=await api('/me');}catch{state.token=null;localStorage.removeItem('pocketful-token');}}
   await render();
