@@ -229,14 +229,8 @@ def fixture_state(body):
             fail()
         record = request_record(state, requester, payer, integer(raw.get("amount"), 0, 1000000000), note(raw), timestamp, rid)
         record["status"] = status
-        payment_id = raw.get("payment_id")
-        if payment_id is not None:
-            payment_id = fixture_id(raw, "payment_id")
-            payment = state["payments"].get(payment_id)
-            if status != "paid" or payment is None or payment["from_user_id"] != payer["id"] or payment["to_user_id"] != requester["id"] or payment["amount"] != record["amount"] or payment["note"] != record["note"] or payment["request_id"] is not None:
-                fail()
-            payment["request_id"] = rid
-        record["payment_id"] = payment_id
+        # Reset accepts the documented fixture fields only. Payment linkage is
+        # created when the API pays a request and is preserved by opaque import.
         state["requests"][rid] = record
     return state
 

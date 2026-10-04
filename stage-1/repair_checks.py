@@ -267,4 +267,32 @@ for status, response in race[:49]:
 expect(call('POST', '/_test/import', baseline, base=B), 204)
 assert snap(B) == baseline
 print('PASS 49 concurrent password checks versus reset: no stale account/session installation', flush=True)
+
+# API response fields do not extend the reset fixture schema. Unknown fields
+# must be ignored for every legal seeded request state and JSON value type.
+for status in ['pending', 'paid', 'declined', 'cancelled']:
+    for unknown in ['not-a-link', 'seed', True, {'ignored': True}, None, 123, []]:
+        candidate = copy.deepcopy(fixture)
+        candidate['requests'][0].update(status=status, payment_id=unknown, created_at={'ignored': True}, visibility=False)
+        candidate['payments'][0].update(request_id={'ignored': True}, settlement_id=True)
+        expect(call('POST', '/_test/reset', candidate), 204)
+        seeded = snap()
+        assert seeded['state']['requests']['seed-request']['status'] == status
+        assert seeded['state']['requests']['seed-request']['payment_id'] is None
+        assert seeded['state']['payments']['seed']['request_id'] is None
+        assert seeded['state']['payments']['seed']['settlement_id'] is None
+        assert [seeded['state']['users'][h]['balance'] for h in 'abc'] == [100, 100, 0]
+        expect(call('POST', '/_test/import', seeded, base=B), 204)
+        assert snap(B) == seeded
+expect(call('POST', '/_test/reset', fixture), 204)
+seed_token = login('a')
+seed_payment = expect(call('POST', '/requests/seed-request/pay', {'visibility': 'private'}, seed_token, 'seed-pay'), 201)
+linked = snap()
+assert seed_payment['request_id'] == 'seed-request' and seed_payment['payment_id'] != 'seed'
+assert linked['state']['requests']['seed-request']['payment_id'] == seed_payment['payment_id']
+assert linked['state']['payments']['seed']['request_id'] is None
+expect(call('POST', '/_test/import', linked, base=B), 204)
+assert snap(B) == linked
+assert expect(call('POST', '/requests/seed-request/pay', {'visibility': 'private'}, seed_token, 'seed-pay', base=B), 200) == seed_payment
+print('PASS unknown fixture response/link fields ignored across all statuses; API-created links and retries survive portable import', flush=True)
 print(f'PASS repair boundaries: {COUNT} HTTP checks; max request {MAX_TIME:.3f}s; private artifacts only in memory', flush=True)
