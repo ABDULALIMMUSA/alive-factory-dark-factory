@@ -18,6 +18,9 @@ async function api(path,method='GET',body,key){
     const code=data?.error?.code;
     throw new Refused(response.status,code,messages[code] || data?.error?.message || 'This action was refused.');
   }
+  // Existing signed-in clients may read the Stage1 shape before an in-place
+  // upgrade. No holds existed there, so its balance is also fully available.
+  if(path==='/me' && data){data.total ??= data.balance;data.held ??= 0;data.available ??= data.total-data.held;}
   return data;
 }
 function money(value){

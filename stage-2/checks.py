@@ -95,13 +95,16 @@ t=seed();auth=need(call('/authorizations',{'to_handle':'b','amount':200},t['a'],
 results=wave(lambda _:call(path,{},t['b'],'same-capture'))
 assert sum(r[0]==201 for r in results)==1 and sum(r[0]==200 for r in results)==49
 assert all(r[1]==results[0][1] for r in results);conserved();assert me(t['a'])['total']==800
+t=seed();results=wave(lambda _:call('/authorizations',{'to_handle':'b','amount':200},t['a'],'same-hold'))
+assert sum(r[0]==201 for r in results)==1 and sum(r[0]==200 for r in results)==49
+assert all(r[1]==results[0][1] for r in results);assert me(t['a'])['held']==200 and me(t['a'])['available']==800;conserved()
 t=seed();results=wave(lambda i:call('/authorizations',{'to_handle':'b','amount':30},t['a'],'reserve-'+str(i)))
 assert sum(r[0]==201 for r in results)==33 and sum(r[0]==409 for r in results)==17
 assert me(t['a'])['available']==10 and me(t['a'])['total']==1000;conserved()
 t=seed();auth=need(call('/authorizations',{'to_handle':'b','amount':600},t['a'],'race'),201);aid=auth['authorization_id']
 results=wave(lambda i:call('/authorizations/'+aid+('/void' if i==49 else '/capture'),{} if i==49 else {'amount':10,'final':False},t['a'] if i==49 else t['b'],'capture-'+str(i) if i!=49 else None))
 assert results[49][0]==200 and all(r[0] in [201,409] for r in results[:49]);state=conserved();assert state['authorizations'][aid]['status']=='voided' and me(t['a'])['held']==0
-print('PASS 50-way capture replay, distinct reserve overspend and capture/void contention',flush=True)
+print('PASS 50-way authorization/capture replay, distinct reserve overspend and capture/void contention',flush=True)
 
 short=copy.deepcopy(fixture);short['authorization_ttl_seconds']=1;t=seed(short)
 auth=need(call('/authorizations',{'to_handle':'b','amount':200},t['a'],'expires'),201);aid=auth['authorization_id'];path='/authorizations/'+aid+'/capture'

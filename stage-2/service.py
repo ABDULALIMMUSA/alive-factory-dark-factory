@@ -1046,7 +1046,8 @@ def dispatch(method, path, query, body, authorization, key):
             fail(409, "authorization_expired")
         if record["status"] != "open":
             fail(409, "authorization_not_open")
-        if instant(record["expires_at"]) <= dt.datetime.now(dt.timezone.utc):
+        capture_time = now()
+        if instant(record["expires_at"]) <= instant(capture_time):
             record["status"] = "expired"
             fail(409, "authorization_expired")
         remaining = record["amount"] - record["captured_amount"]
@@ -1064,7 +1065,7 @@ def dispatch(method, path, query, body, authorization, key):
         sender = state["users"][record["from_user_id"]]
         if user["balance"] + value > MAX_BALANCE:
             fail()
-        payment = payment_record(state, sender, user, value, record["note"], record["visibility"])
+        payment = payment_record(state, sender, user, value, record["note"], record["visibility"], timestamp=capture_time)
         payment["authorization_id"] = aid
         sender["balance"] -= value
         user["balance"] += value
