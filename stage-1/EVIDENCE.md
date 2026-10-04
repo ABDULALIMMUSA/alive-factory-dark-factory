@@ -324,3 +324,63 @@ risks are retained in the six-field report at
 also linked in #8 and Foreman's visible handoff. Private snapshots remain in RAM.
 Foreman next routes the repaired exact SHA through renewed Integrator/Test Pilot
 checks and then Inspector. No acceptance is claimed.
+
+## Repair #9: exact JSON numbers without representation limits
+
+Inspector rejected `437b56d2deb96646a55360b4f8caaa5938985b70` for four new
+numeric failures. Before editing, Fabricator built that revision and reran the
+unchanged `numeric-437b56d.py`: 48 checks, 44 passed, four failed. Equivalent
+4,301/5,000-digit integer retries returned 400; an unused-key 5,000-digit amount
+returned 400; the short enormous-exponent amount closed the connection with
+`decimal.InvalidOperation` (no HTTP 5xx response observed). Health stayed 200.
+Actual failure logs remain outside Git at `pocketful-fabricator-r9-before.log`
+and `pocketful-fabricator-r9-before-service.log` in the parent workspace.
+
+The source/test repair is `1da47776db111836d944f976c2d8f6e47688b9ea`.
+JSON fractional/exponent numbers now retain normalized exact decimal digits and
+an arbitrary integer exponent. Bounded monetary conversion checks sign,
+integrality and decimal length before expanding powers; Python's unstated
+integer-token digit limit is disabled. Canonical body identity and import decode
+use the same exact representation, preserving the existing opaque export format.
+Arithmetic conversion exceptions are covered by the handler guard. No rounding,
+numeric string/boolean coercion, hash-strength change or timeout change was added.
+
+The unchanged Inspector numeric probe passed all 48 checks on the repair.
+New HTTP-only numeric regressions passed 711 calls in separate-container and
+network-none configurations, including all five paths, 5,000-digit coefficient
+and exponent identities, signed zeros, fractions, cancellation into small valid
+amounts, conflicts, rollback, failed keys, tokens/operator permissions and
+unchanged portable exports. Internal services used 2 CPU/2 GiB/no mounts and an
+internal network; the custom PORT service used network none with the same caps.
+
+Both configurations passed unchanged seeded 17-case/68-call probes, R1/R2
+233-case/516-call probes, full integration 771 checks, product 668 checks and
+repair 657 checks. The original Inspector R1/R2 probe reported zero failures.
+One predeclared external-client auth run passed 16 cases/1,205 calls, max 2.063s.
+Unchanged supplied tests passed 147/147 in 49.37s with a read-only pytest-cache
+warning, using the supplied runner/plugin with POSIX path transport. This does
+not claim the stock Windows CLI scoring issue is fixed.
+
+Two initial R1/R2 invocations omitted their required `--revision` argument and
+exited 2 before executing cases. Their logs and the runner exit 1 remain intact;
+only those invocations were corrected and both then passed. The first expanded
+test draft omitted required seeded request `status` and failed its reset baseline;
+the baseline was corrected without changing production behavior or peer tests.
+The initial repro ran before readiness and failed its health assertion; a health
+200 check preceded the retained four-failure reproduction. These setup mistakes
+are distinct from the reproduced product defects.
+
+Host/container service SHA256:
+`7bb43b5ac5e1bb8930e25f921119b72d7d0bd392aa2c009e8120a3847f45c0a9`.
+Repaired image ID:
+`sha256:8eba16cb7f5c56388886f2fe2df2fdd56f52fbfa370a740caf7f670fb735940c`.
+Final service logs were empty. Source and all four check scripts compile;
+`git diff --check` passed. Credential-bearing state stayed in RAM.
+
+Full exact child SHA, commands, logs and six-field handoff are at
+`C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-fabricator-repair-9-evidence.md`.
+Earlier colocated-client timing failures remain preserved; Inspector adjudicated
+that topology nonblocking for the specified service-alone quota, without proving
+the cause. Finite numeric/concurrency tests do not exhaust all inputs/schedules or
+sustained load. Foreman next routes the exact revision for renewed Integrator and
+Test Pilot verification, then Inspector. Shipper remains gated; no self-acceptance.
