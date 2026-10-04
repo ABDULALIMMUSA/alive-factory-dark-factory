@@ -72,3 +72,87 @@ is claimed.
 Foreman's next action is to route the exact handoff SHA to Integrator for independent
 Docker lifecycle, concurrency, atomicity and portable-state verification. Repairs
 and later seat packets remain routed by Foreman.
+
+## Repair #6: missing required arrays
+
+This addendum preserves the original evidence above and supersedes its
+"no remaining product defect observed" statement for the rejected candidate
+`e6df7a668de6c0c051116507e4d6c30bf03d2a40`. Integrator independently identified two
+manifestations of the required-array validation defect. Fabricator reproduced
+them before editing source:
+
+| Request | Rejected candidate observed | Required/repaired response |
+| --- | --- | --- |
+| Authenticated POST /splits, valid key, body `{"amount":1}` | 400 malformed_request | 422 validation_failed |
+| Unauthenticated POST /_test/reset, body `{"currency":"EUR","minor_units":2}` | 400 malformed_request | 422 validation_failed |
+
+Both failure reproductions left exported state unchanged. Root cause:
+`array_field` treated an absent required field like a present field of the wrong
+type. The scoped source repair adds an absence check before type validation.
+Explicit null, boolean, number, string or object values still produce 400
+malformed_request. Optional fixture payments, requests and settlement_operator_ids
+still default to empty when omitted. No other product source changed.
+
+Integrator's unchanged independent harness was read and executed from
+`C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-integrator-checks.py`.
+Its original evidence remains at
+`C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-integrator-e6df7a6-evidence.md`;
+Fabricator did not edit either file. The local checks.py adds HTTP regressions for
+both omissions, five present wrong-type values on required and optional arrays,
+unchanged snapshots after each error, reusable failed split keys and optional
+fixture defaults, followed by snapshot restoration and the existing full suite.
+
+Before the repair, these commands reproduced Integrator's two failing groups
+(771 HTTP checks, exit 1, maximum measured request 0.107 seconds):
+
+```sh
+docker --context desktop-linux build -t pocketful-fabricator:repair-repro ./stage-1
+docker --context desktop-linux run -d --name pocketful-fabricator-repair-repro --network none --cpus=2 --memory=2g -e PORT=18778 pocketful-fabricator:repair-repro
+docker --context desktop-linux cp 'C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-integrator-checks.py' pocketful-fabricator-repair-repro:/tmp/integration.py
+docker --context desktop-linux exec pocketful-fabricator-repair-repro python /tmp/integration.py http://127.0.0.1:18778 http://127.0.0.1:18778
+```
+
+After the repair, compilation/build/whitespace checks passed. The following
+commands passed on the repaired service (all test runs exited 0):
+
+```sh
+python -m py_compile stage-1/service.py stage-1/checks.py
+git diff --check
+docker --context desktop-linux build -t pocketful-fabricator:repair ./stage-1
+docker --context desktop-linux run -d --name pocketful-fabricator-repair --network none --cpus=2 --memory=2g -e PORT=18778 pocketful-fabricator:repair
+docker --context desktop-linux cp 'C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-integrator-checks.py' pocketful-fabricator-repair:/tmp/integration.py
+docker --context desktop-linux exec pocketful-fabricator-repair python /tmp/integration.py http://127.0.0.1:18778 http://127.0.0.1:18778
+docker --context desktop-linux cp stage-1/checks.py pocketful-fabricator-repair:/tmp/checks.py
+docker --context desktop-linux exec pocketful-fabricator-repair python /tmp/checks.py http://127.0.0.1:18778
+docker --context desktop-linux run -d --name pocketful-fabricator-repair-source -p 18280:8080 --cpus=2 --memory=2g pocketful-fabricator:repair
+docker --context desktop-linux run -d --name pocketful-fabricator-repair-destination -p 18291:8091 -e PORT=8091 --cpus=2 --memory=2g pocketful-fabricator:repair
+python stage-1/checks.py http://127.0.0.1:18280 http://127.0.0.1:18291
+python 'C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-integrator-checks.py' http://127.0.0.1:18280 http://127.0.0.1:18291
+```
+
+Observed repaired results:
+
+- Integrator's supplied suite: 771 checks, all nine groups passed, zero failed
+  groups in each configuration. Maximum measured request 0.164 seconds offline
+  and 0.172 seconds across separate mapped containers.
+- Expanded Fabricator suite: 668 checks passed in each configuration, including
+  the new required/optional array HTTP regressions and all original endpoint,
+  concurrency, state continuity and arithmetic checks.
+- Both exact missing-field reproductions now returned 422 validation_failed.
+- Image `sha256:c89ce0fa67f21b20e3ebc082608dca8ea48752ae62427602ef6003fbb883c337`
+  was used by all repaired containers. Inspection confirmed 2 CPU/2 GiB limits
+  and the offline container's network mode none. Service logs were empty.
+- All four Fabricator repair/repro containers were removed. No private snapshot
+  or token artifacts were written to Git or the room.
+
+Coverage delta is specification section 5's missing-field/type distinction, used
+by section 8's split participant list and sections 3/4's reset users fixture.
+All original sections 1–11 remain implemented; the unchanged Integrator suite
+and expanded local suite were fully rerun. No additional product defect was
+observed in these runs. Existing global-lock/ephemeral-state and unbounded-load
+limitations remain. These executions by Fabricator are repair evidence, not a
+new independent acceptance decision.
+
+Next action: Foreman supplies the exact new repair SHA to Integrator for renewed
+independent verification, then routes Test Pilot and Inspector on that tested
+revision. No self-acceptance is claimed.

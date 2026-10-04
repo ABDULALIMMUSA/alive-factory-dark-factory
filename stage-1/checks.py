@@ -146,6 +146,28 @@ ordered = check(call("POST", "/splits", {"amount": 10, "participant_handles": ["
 assert ordered["shares"] == [{"handle": "cy", "amount": 4}, {"handle": "bob", "amount": 3}, {"handle": "ada", "amount": 3}]
 for handles, code in [([], "validation_failed"), (["bob", "bob"], "validation_failed"), (["bob", "unknown"], "not_found")]:
     check(call("POST", "/splits", {"amount": 1, "participant_handles": handles}, ada, "bad-split"), 404 if code == "not_found" else 422, code)
+
+# Required-array absence is validation failure; a present wrong type is malformed.
+before_arrays = export()
+check(call("POST", "/splits", {"amount": 1}, ada, "missing-array"), 422, "validation_failed")
+assert export() == before_arrays
+check(call("POST", "/_test/reset", {"currency": "EUR", "minor_units": 2}), 422, "validation_failed")
+assert export() == before_arrays
+for wrong_type in [None, False, 1, "ada", {}]:
+    check(call("POST", "/splits", {"amount": 1, "participant_handles": wrong_type}, ada, "wrong-array-type"), 400, "malformed_request")
+    assert export() == before_arrays
+    check(call("POST", "/_test/reset", {"currency": "EUR", "minor_units": 2, "users": wrong_type}), 400, "malformed_request")
+    assert export() == before_arrays
+    for optional in ["payments", "requests", "settlement_operator_ids"]:
+        check(call("POST", "/_test/reset", {**FIXTURE, optional: wrong_type}), 400, "malformed_request")
+        assert export() == before_arrays
+check(call("POST", "/splits", {"amount": 1, "participant_handles": ["ada"]}, ada, "missing-array"), 201)
+restorable_arrays = export()
+check(call("POST", "/_test/reset", {"currency": "EUR", "minor_units": 2, "users": FIXTURE["users"]}), 204)
+optional_defaults = export()["state"]
+assert optional_defaults["payments"] == {} and optional_defaults["requests"] == {} and optional_defaults["operators"] == []
+check(call("POST", "/_test/import", restorable_arrays), 204)
+assert export() == restorable_arrays
 total([ada, bob, cy])
 
 # Fifty simultaneous identical retries: only one mutation and one creation.

@@ -139,6 +139,8 @@ def currency_fields(body):
 
 
 def array_field(body, key, default=None):
+    if key not in body and default is None:
+        fail(message="Missing " + key)
     value = body.get(key, default)
     if not isinstance(value, list):
         fail(400, "malformed_request")
