@@ -17,7 +17,7 @@ OLD=sys.argv[3] if len(sys.argv)>3 else None
 COUNT=0
 MAX=0
 
-def call(path,body=None,token=None,key=None,base=A):
+def call(path,body=None,token=None,key=None,base=A,method=None):
     global COUNT,MAX
     address=urlsplit(base);conn=http.client.HTTPConnection(address.hostname,address.port,timeout=10 if path.startswith('/_test/') else 5)
     headers={'Accept':'application/json','Content-Type':'application/json'}
@@ -25,7 +25,7 @@ def call(path,body=None,token=None,key=None,base=A):
     if key:headers['Idempotency-Key']=key
     start=time.monotonic()
     try:
-        conn.request('GET' if body is None else 'POST',path,None if body is None else json.dumps(body).encode(),headers)
+        conn.request(method or ('GET' if body is None else 'POST'),path,None if body is None else json.dumps(body).encode(),headers)
         response=conn.getresponse();raw=response.read();elapsed=time.monotonic()-start
         COUNT+=1;MAX=max(MAX,elapsed)
         assert response.status<500 and elapsed<(10 if path.startswith('/_test/') else 5)
@@ -90,6 +90,13 @@ for mutate in ['amount','actor','order','receipt','final']:
         entry['body'][1]=[pair for pair in entry['body'][1] if pair[0]!='final']
     baseline=snapshot(B);need(call('/_test/import',bad,base=B),422,'validation_failed');assert snapshot(B)==baseline
 print('PASS reserved affordability, partial/final captures, net funding, semantic portable claims',flush=True)
+
+t=seed();auth=need(call('/authorizations',{'to_handle':'b','amount':100},t['a'],'empty-void'),201)
+void_path='/authorizations/'+auth['authorization_id']+'/void'
+need(call(void_path,token=t['a'],method='POST'),200)
+need(call(void_path,token=t['a'],method='POST'),200)
+assert me(t['a'])['held']==0
+print('PASS bodyless void and repeated release follow decline/cancel control semantics',flush=True)
 
 t=seed();auth=need(call('/authorizations',{'to_handle':'b','amount':200},t['a'],'contend'),201);path='/authorizations/'+auth['authorization_id']+'/capture'
 results=wave(lambda _:call(path,{},t['b'],'same-capture'))

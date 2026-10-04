@@ -50,6 +50,13 @@ Exact numeric identity and portable retry regressions cover all seven paths:
 python stage-2/numeric_checks.py http://localhost:18886 http://localhost:18887
 ```
 
+The Fabricator-derived semantic corruption probe adapts the retained Stage1
+probe's export schema guard to Stage2 while preserving its assertions:
+
+```sh
+python stage-2/semantic_checks.py --source http://localhost:18886 --destination http://localhost:18887 --revision FULL_GIT_SHA
+```
+
 For browser fault/viewport checks, a development environment with Playwright and
 Chromium can run `browser_checks.py` with the Stage2 URL, shipped Stage1 URL and
 a screenshot output directory. These testing dependencies are not runtime dependencies.

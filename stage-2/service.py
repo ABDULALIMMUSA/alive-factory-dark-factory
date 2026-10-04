@@ -1132,7 +1132,7 @@ class Handler(BaseHTTPRequestHandler):
                 except (ValueError, UnicodeError, ArithmeticError, RecursionError):
                     fail(400, "malformed_request")
                 object_value(body)
-            elif self.command == "POST" and not re.fullmatch(r"/requests/[^/]+/(decline|cancel)", urlsplit(self.path).path):
+            elif self.command == "POST" and not re.fullmatch(r"/requests/[^/]+/(decline|cancel)|/authorizations/[^/]+/void", urlsplit(self.path).path):
                 fail(400, "malformed_request")
             url = urlsplit(self.path)
             if self.command == "POST" and url.path in {"/auth/signup", "/auth/login"}:
