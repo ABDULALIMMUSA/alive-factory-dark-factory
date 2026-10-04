@@ -1,0 +1,7 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY service.py /app/service.py
+ENV PORT=8080 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+EXPOSE 8080
+USER 65534:65534
+CMD ["python", "/app/service.py"]
