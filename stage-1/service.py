@@ -220,7 +220,7 @@ def validate_snapshot(body):
         if body.get("track") != "pocketful" or type(body.get("format_version")) is bool or body.get("format_version") != 1:
             fail()
         state = body["state"]
-        if not isinstance(state, dict) or set(state) != set(blank_state()) or state["schema"] != 1:
+        if not isinstance(state, dict) or set(state) != set(blank_state()) or isinstance(state["schema"], bool) or state["schema"] != 1:
             fail()
         currency_fields(state)
         if any(not isinstance(state[key], dict) for key in ("users", "tokens", "payments", "requests", "settlements")):
@@ -230,6 +230,8 @@ def validate_snapshot(body):
         emails, handles = set(), set()
         for uid, user in state["users"].items():
             validate_id(uid)
+            if set(user) != {"id", "email", "display_name", "handle", "balance", "password_hash"}:
+                fail()
             if user["id"] != uid or not EMAIL.fullmatch(user["email"]) or not HANDLE.fullmatch(user["handle"]):
                 fail()
             if user["email"] in emails or user["handle"] in handles or not isinstance(user["display_name"], str):
@@ -250,6 +252,9 @@ def validate_snapshot(body):
             fail()
         def validate_record(rid, record, payment):
             validate_id(rid)
+            fields = {"payment_id", "from_user_id", "from_handle", "to_user_id", "to_handle", "amount", "currency", "note", "visibility", "request_id", "settlement_id", "created_at"} if payment else {"request_id", "requester_id", "requester_handle", "payer_id", "payer_handle", "amount", "currency", "note", "status", "payment_id", "created_at"}
+            if set(record) != fields:
+                fail()
             if record["payment_id" if payment else "request_id"] != rid or record["currency"] != state["currency"]:
                 fail()
             left, right = ("from", "to") if payment else ("requester", "payer")
@@ -277,9 +282,22 @@ def validate_snapshot(body):
             validate_record(pid, record, True)
         for rid, record in state["requests"].items():
             validate_record(rid, record, False)
+            if record["payment_id"] is not None:
+                payment = state["payments"][record["payment_id"]]
+                if record["status"] != "paid" or payment["request_id"] != rid or payment["from_user_id"] != record["payer_id"] or payment["to_user_id"] != record["requester_id"] or payment["amount"] != record["amount"] or payment["note"] != record["note"]:
+                    fail()
+        for pid, payment in state["payments"].items():
+            if payment["request_id"] is not None:
+                if state["requests"][payment["request_id"]]["payment_id"] != pid or payment["settlement_id"] is not None:
+                    fail()
+            if payment["settlement_id"] is not None:
+                if payment not in state["settlements"][payment["settlement_id"]]["payments"]:
+                    fail()
         for sid, settlement in state["settlements"].items():
             validate_id(sid)
             if settlement["settlement_id"] != sid or not 1 <= len(settlement["payments"]) <= 32:
+                fail()
+            if len({payment["payment_id"] for payment in settlement["payments"]}) != len(settlement["payments"]):
                 fail()
             for payment in settlement["payments"]:
                 if payment != state["payments"][payment["payment_id"]] or payment["settlement_id"] != sid or payment["request_id"] is not None or payment["created_at"] != settlement["committed_at"]:
