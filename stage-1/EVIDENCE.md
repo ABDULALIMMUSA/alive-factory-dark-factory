@@ -374,7 +374,7 @@ Host/container service SHA256:
 `7bb43b5ac5e1bb8930e25f921119b72d7d0bd392aa2c009e8120a3847f45c0a9`.
 Repaired image ID:
 `sha256:8eba16cb7f5c56388886f2fe2df2fdd56f52fbfa370a740caf7f670fb735940c`.
-Final service logs were empty. Source and all four check scripts compile;
+Final service logs were empty. All four Python files (service plus checks) compile;
 `git diff --check` passed. Credential-bearing state stayed in RAM.
 
 Full exact child SHA, commands, logs and six-field handoff are at
