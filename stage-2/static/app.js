@@ -7,14 +7,16 @@ class Refused extends Error { constructor(status,code,message){super(message);th
 const messages = {insufficient_funds:'There isn’t enough available money for this. Your wallet has been refreshed.',not_found:'We couldn’t find that person or item. Check the handle and try again.',self_payment:'Choose someone else to receive this payment.',self_request:'Choose someone else to receive this request.',request_not_pending:'This request has already changed. The latest status is shown below.',authorization_expired:'This reservation has expired. Its remaining funds have been released.',authorization_not_open:'This reservation has already closed. We’ve refreshed its status.',capture_exceeds_authorization:'The capture is larger than the amount remaining in this reservation.',forbidden:'This action is available only to the permitted person.',email_taken:'That email already has an account. Try signing in.',handle_taken:'That email would create a handle that is already in use.',unauthenticated:'We couldn’t sign you in. Check your email and password.',idempotency_key_reuse:'This retry no longer matches the original action. Edit the form to start a new action.',validation_failed:'Check the amount and other details, then try again.'};
 async function api(path,method='GET',body,key){
   if(method==='GET')return request(path,method,body,key);
-  let finish,confirmed=false;
-  const pending=new Promise(resolve=>{finish=resolve;});
-  state.pendingWrites.add(pending);
+  const finish=beginAction();let confirmed=false;
   try{
     const result=await request(path,method,body,key);confirmed=true;return result;
-  }finally{
-    state.pendingWrites.delete(pending);finish(confirmed);
-  }
+  }finally{finish(confirmed);}
+}
+function beginAction(){
+  let finish;
+  const pending=new Promise(resolve=>{finish=resolve;});
+  state.pendingWrites.add(pending);
+  return confirmed=>{state.pendingWrites.delete(pending);finish(confirmed);};
 }
 async function request(path,method,body,key){
   const headers = {'Accept':'application/json'};
@@ -89,15 +91,17 @@ function bindFields(){
 async function write(name,path,body,button,success){
   let operation=state.ops.get(name);
   if(!operation){operation={key:crypto.randomUUID(),body:structuredClone(body),path};state.ops.set(name,operation);}
+  const finish=beginAction();let confirmed=false;
   button.disabled=true;feedback(name,'loading','Confirming your action…');
   try{
     await api(operation.path,'POST',operation.body,operation.key);
+    confirmed=true;
     feedback(name,'success',success);
     try{await refreshPage();}catch{feedback(name,'success',success+' We couldn’t refresh the view yet; use Refresh to load it.');}
   }catch(error){
     if(error instanceof Refused){feedback(name,'error',error.message);try{await refreshPage();}catch{}}
     else feedback(name,name==='pay'?'uncertain':'uncertain',name==='pay'?'We couldn’t confirm whether your payment arrived. Keep these details and retry safely; it will only move once.':'We couldn’t confirm the outcome. Retry with these unchanged details to check the original action.');
-  }finally{button.disabled=false;}
+  }finally{button.disabled=false;finish(confirmed);}
 }
 function bindTransfer(name,path,success){
   document.getElementById(name+'-form')?.addEventListener('submit',event=>{
@@ -135,18 +139,19 @@ async function loadRequests(){
   document.getElementById('requests-empty').innerHTML=data.requests.length?'':'<div class="feedback loading" data-testid="empty-requests">No requests yet. When you ask or receive one, you’ll see it here.</div>';
   document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',async()=>{
     const id=button.dataset.id, action=button.dataset.action, name='request-action-'+id;
+    const finish=beginAction();let confirmed=false;
     if(action==='pay'){
       // Preserve the path-scoped retry identity even if a response is lost.
       let op=state.ops.get(name);if(!op){op={key:crypto.randomUUID(),body:{}};state.ops.set(name,op);}
       button.disabled=true;feedback('request','loading','Confirming this request…');
-      try{await api('/requests/'+encodeURIComponent(id)+'/pay','POST',op.body,op.key);feedback('request','success','Request paid.');}
+      try{await api('/requests/'+encodeURIComponent(id)+'/pay','POST',op.body,op.key);confirmed=true;feedback('request','success','Request paid.');}
       catch(error){feedback('request',error instanceof Refused?'error':'uncertain',error instanceof Refused?error.message:'We couldn’t confirm the payment. Retry to check it safely.');}
     }else{
       button.disabled=true;
-      try{await api('/requests/'+encodeURIComponent(id)+'/'+action,'POST',{});feedback('request','success',action==='decline'?'Request declined.':'Request cancelled.');}
+      try{await api('/requests/'+encodeURIComponent(id)+'/'+action,'POST',{});confirmed=true;feedback('request','success',action==='decline'?'Request declined.':'Request cancelled.');}
       catch(error){feedback('request','error',error.message);}
     }
-    try{await refreshPage();}catch(error){feedback('request','error',error.message);}finally{button.disabled=false;}
+    try{await refreshPage();}catch(error){feedback('request','error',error.message);}finally{button.disabled=false;finish(confirmed);}
   }));
 }
 function preview(){
@@ -172,16 +177,16 @@ async function loadAuthorizations(){
     let body;try{body={amount:minor(input.value)};if(partial)body.final=false;}catch(error){feedback('authorization','error',error.message);return;}
     const name='capture-'+id, identity=JSON.stringify(body);let op=state.ops.get(name);
     if(!op||op.identity!==identity){op={key:crypto.randomUUID(),body,identity};state.ops.set(name,op);}
-    button.disabled=true;
-    try{await api('/authorizations/'+encodeURIComponent(id)+'/capture','POST',op.body,op.key);feedback('authorization','success','Money collected. Your wallet and reservation are up to date.');}
+    const finish=beginAction();let confirmed=false;button.disabled=true;
+    try{await api('/authorizations/'+encodeURIComponent(id)+'/capture','POST',op.body,op.key);confirmed=true;feedback('authorization','success','Money collected. Your wallet and reservation are up to date.');}
     catch(error){feedback('authorization',error instanceof Refused?'error':'uncertain',error instanceof Refused?error.message:'The outcome is uncertain. Retry these details to confirm the original capture.');}
-    try{await refreshPage();}catch{}finally{button.disabled=false;}
+    try{await refreshPage();}catch{}finally{button.disabled=false;finish(confirmed);}
   }));
   document.querySelectorAll('[data-void]').forEach(button=>button.addEventListener('click',async()=>{
-    button.disabled=true;
-    try{await api('/authorizations/'+encodeURIComponent(button.dataset.void)+'/void','POST',{});feedback('authorization','success','Reservation released. The remaining money is available again.');}
+    const finish=beginAction();let confirmed=false;button.disabled=true;
+    try{await api('/authorizations/'+encodeURIComponent(button.dataset.void)+'/void','POST',{});confirmed=true;feedback('authorization','success','Reservation released. The remaining money is available again.');}
     catch(error){feedback('authorization','error',error.message);}
-    try{await refreshPage();}catch{}finally{button.disabled=false;}
+    try{await refreshPage();}catch{}finally{button.disabled=false;finish(confirmed);}
   }));
 }
 async function render(){
@@ -191,11 +196,11 @@ async function render(){
     const signup=state.route==='/signup',name=signup?'signup':'login';
     main.innerHTML=`<div class="auth-layout"><section class="auth-intro"><div class="eyebrow">A clearer everyday wallet</div><h1>${signup?'Good things start<br>with a connection.':'Welcome back.<br>Make yourself at home.'}</h1><p class="subtext">Pay someone, share a bill, or set money aside. A little less admin. A little more living.</p><div class="auth-art" aria-hidden="true"><span class="art-dot">↗</span><h3>Money with room to breathe.</h3><div class="art-line"></div><div class="art-line" style="width:42%"></div></div></section><section class="card"><div class="card-title"><h2>${signup?'Create your account':'Sign in to Pocketful'}</h2></div><form id="auth-form" novalidate>${signup?field('signup-display-name','Your name','How should we greet you?'):''}${field(name+'-email','Email address','you@example.com','email')}${field(name+'-password','Password',signup?'At least 8 characters':'Your password','password')}<button class="button" data-testid="${name}-submit" style="width:100%">${signup?'Create account':'Sign in'} <span aria-hidden="true">↗</span></button><div id="auth-feedback"></div></form><p class="auth-footer">${signup?'Already with us? <a href="/login">Sign in</a>':'New here? <a href="/signup">Create an account</a>'}</p></section></div>`;
     document.getElementById('auth-form').addEventListener('submit',async(event)=>{
-      event.preventDefault();const button=$(name+'-submit');button.disabled=true;feedback('auth','loading','Signing you in…');
+      event.preventDefault();const button=$(name+'-submit');const finish=beginAction();let confirmed=false;button.disabled=true;feedback('auth','loading','Signing you in…');
       try{
         const body={email:$(name+'-email').value,password:$(name+'-password').value};if(signup)body.display_name=$('signup-display-name').value;
-        const result=await api('/auth/'+name,'POST',body);state.token=result.token;localStorage.setItem('pocketful-token',result.token);state.me=await api('/me');go('/');
-      }catch(error){feedback('auth','error',error.message);}finally{button.disabled=false;}
+        const result=await api('/auth/'+name,'POST',body);state.token=result.token;localStorage.setItem('pocketful-token',result.token);state.me=await api('/me');confirmed=true;go('/');
+      }catch(error){feedback('auth','error',error.message);}finally{button.disabled=false;finish(confirmed);}
     });
     main.querySelectorAll('a').forEach(link=>link.addEventListener('click',e=>{e.preventDefault();go(link.getAttribute('href'));}));
   }else if(state.route==='/'){
