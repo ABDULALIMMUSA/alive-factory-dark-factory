@@ -1,38 +1,40 @@
-# Pocketful Stage 1 production plan
+# Pocketful Stage 2 production plan
 
-Authoritative specification: `C:\Users\DELL\Documents\ALIVE FACTORY\challenge\pocketful\spec\stage-1.md`.
-Submission: `C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-result\stage-1`.
+Stage 1 is SHIPPED at `65a56da7aa03c6690f12aa24c0dad372f2163437`. Preserve its directory and existing evidence unchanged. Independently buildable Stage 2 output: `C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-result\stage-2`.
 
-## Production packets
+Both complete specifications are authoritative: `C:\Users\DELL\Documents\ALIVE FACTORY\challenge\pocketful\spec\stage-1.md` and `C:\Users\DELL\Documents\ALIVE FACTORY\challenge\pocketful\spec\stage-2.md`. Stage 2 inherits every Stage 1 requirement. Supplied checks alone are insufficient evidence.
 
-1. Foreman verifies workspace, Git, Docker, readable complete specification, absence of stale Toy code, and all-seat participation. Passed: clean unborn main; stage-1 absent; Docker server 29.8.1; every seat visibly confirmed local access and readiness.
-2. Fabricator implements the complete specification in stage-1 with meaningful commits, a self-contained Dockerfile, RUN.md and implementation evidence. Primary packet #1 and repair packets #6/#7 are completed; the latest source commit is `a5741a7d7b9f32f06b06315b2638467f73111912` and still requires renewed independent verification.
-3. Integrator independently inspects the exact Fabricator revision against the whole specification and runs Docker lifecycle, concurrency, atomicity and portable-state checks. Shared task #2.
-4. Test Pilot independently attempts specification-derived falsification and runs the supplied isolated harness. Shared task #3. Preparation can proceed before the candidate, with artifacts outside the product tree.
-5. Inspector independently issues evidence-backed ACCEPT or REJECT for the exact tested revision. Shared task #4. Rejection routes through Foreman for repair and renewed independent verification.
-6. Shipper follows RUN.md from a clean checkout/build of the exact Inspector-accepted revision and verifies the runtime contract. Shared task #5. Any source change invalidates acceptance.
-7. Foreman records the exact delivered revision and evidence in a final SHIPPED or BLOCKED Factory Receipt. Foreman neither implements nor accepts product work.
+## Factory packets
 
-## Coverage required at the gates
+1. Foreman confirms clean baseline Git, readable cumulative specs, reachable Docker, no stale Stage 2 output, preservation hashes and current all-seat participation. External baseline: `C:\Users\DELL\Documents\ALIVE FACTORY\checks\pocketful-stage-2-foreman\stage-1-preservation.md`.
+2. Fabricator #10 owns full cumulative primary implementation, presentation-ready browser product, offline assets, independent Dockerfile/RUN.md and meaningful commits. Source mutation waits for Foreman preflight GO.
+3. Integrator #11 independently reviews whole source/specification and exact-revision integration, lifecycle, concurrency, snapshot/migration and browser behavior. Preparation outside product; execution follows exact candidate transfer.
+4. Test Pilot #12 independently falsifies API and actual browser behavior, reviews responsive presentation and accessibility, injects controlled delayed/lost responses and stale clients, and runs unchanged supplied cumulative checks. Execution follows Integrator exact-SHA packet.
+5. Inspector #13 independently ACCEPTs or REJECTs exact fully tested SHA from complete specification/source and final executed evidence. No silent repair or self-acceptance.
+6. Shipper #14 verifies only accepted SHA from clean LF checkout/no-cache Docker build using RUN.md. Verify default/custom PORT, resource limits, offline runtime/assets and browser/API delivery. Preserve unrelated host8080 incumbent.
+7. Foreman posts final SHIPPED or BLOCKED receipt with exact revision, substantive seat contributions, checks, repairs and limits. Foreman coordinates, never implements product or self-accepts.
 
-- Container portability, configurable listening port, health, resource/time limits and no runtime outbound dependencies.
-- Authentication, derived handles, multiple tokens and password hashing.
-- Exact minor-unit monetary arithmetic, conservation, nonnegative balances and atomic changes under concurrency.
-- Payments, legal over-balance requests, request terminal states, payer/requester authorization and once-only payment.
-- All five idempotent paths: per-user and per-method/path scope, JSON-value bodies, replay precedence, original response preservation and reusable failed keys.
-- Exact ordered split rounding including zero shares and caller-only splits; feed/request privacy, filters and pagination.
-- Correct type/validation errors, optional defaults, unknown fields, note round trips and timestamps.
-- Atomic reset and portable export/import preserving hashes, tokens, identities, timestamps, money, requests, operator permissions, settlement membership and successful retry records. Failed controls must preserve prior state.
-- Atomic net settlements: ordered entry errors, cyclic affordability, full-batch commit or rollback, shared timestamps and ordinary feed visibility.
+## Required cumulative verification
 
-## Evidence continuity
+- Every Stage 1 endpoint, authentication/privacy rule, error precedence, note round trip, exact monetary bound, ordered split/zero-share behavior, atomic net settlement and original successful retry receipt remains compatible without holds.
+- Conservation of wallet totals; available = total - held >= 0. Holds reserve without transfer. Payments, request pays and settlement net debits use available; captures spend their reservation.
+- Fixture authorization TTL/defaults, absolute seeded expiry, derived available/held, reset rollback, party-only capture/void permissions and correct list filtering/pagination.
+- Final/nonfinal and omitted-amount captures, cumulative captured amount, ordered payment_ids/latest payment_id, remaining_amount, closing/releasing partial holds on final capture/void/expiry, seven-path original-response replay and failed-key reuse.
+- Up to 50 concurrent requests: holds/captures/void/expiry versus payments/request pays/net settlements and atomic snapshots. Correct state at every read and original 5s ordinary/10s control deadlines.
+- Browser routes /, /requests, /split, /signup, /login and /authorizations; shared HTML/JSON route Accept behavior. Every specified data-testid, exact EUR/JPY/BHD decimal parsing/formatting, ordered split preview, statuses/direction/privacy, authentication/logout and refresh after writes.
+- Calm, coherent consumer-finance UX at375px and desktop with no horizontal scroll. Available headline, total/held secondary; visible labels, keyboard focus, contrast, consistent navigation and considered empty/loading/success/refused/uncertain states.
+- Preserve pay inputs on success/refusal/refresh; unchanged successful resubmission moves once and changed fields create new requests. Lost responses show uncertainty, preserving exact key/body. Competing-client refusal refreshes wallet/feed; cancelled stale requests refresh list/remove obsolete actions.
+- Deliberately reordered balance/feed reads: latest refresh wins, including available/held. Navigation waits for writes. No live update/background polling or reload recovery is required.
+- Stage 1 export to Stage 2 import with source unavailable: preserve hashed login, existing tokens, permissions, identities, records, pending requests and completed retries. Existing browser session and uncertain payment key/body survive import between requests without reload.
+- Stage 2 portable exports preserve authorizations/captures and all seven retry paths, original receipts, credentials and permissions; malformed/semantic imports reject atomically. Treat credential-bearing exports as private artifacts.
+- Single self-contained image, bundled fonts/scripts/styles, configurable/default port, health within60s,2CPU/2GiB, no outbound runtime dependencies and documented ephemeral restart behavior.
 
-Every substantive handoff names the exact Git revision, specification coverage, commands executed, observed results, defects or unresolved risks, and explicit next-seat action. Receiving seats visibly reply using their real room handles. Credential-bearing exports remain private and outside Git and room messages. Failed verification is routed through Foreman; repaired revisions are independently re-tested and re-inspected. Supplied checks alone are insufficient evidence.
+## Evidence continuity and repairs
 
-## Preserved repair history and current structure
+Every handoff uses receiving seat real handle and visible reply, with exact revision, cumulative coverage, executed commands, observed results, defects/risks and explicit next-seat action. Preserve clean revision/source/image identity and failed logs. Failed verification routes through Foreman to responsible seat; Fabricator owns primary repairs. Every repair receives independent reruns and renewed inspection. Any product change after acceptance invalidates it.
 
-- Integrator rejected `e6df7a668de6c0c051116507e4d6c30bf03d2a40` for missing required split/reset arrays returning 400 rather than 422. Fabricator repair `998dc1ae32db14f7be18ce3369393fa17e59c7f0` independently passed Integrator's renewed checks and Test Pilot's independent groups and 147 supplied tests.
-- Inspector then rejected that revision for reset scalar/ID type errors and contradictory imported completed retry bodies. Fabricator repair #7 validates omission/type/value distinctions and completed body/receipt/resource/path/actor/permission semantics across all five paths. Original rejection evidence remains outside the product repository.
-- Fabricator also observed concurrent login timeouts. Password hashing now runs outside the transaction lock; account/session commits remain guarded against reset/import replacement. Monetary changes, request transitions, receipts, snapshots and state replacement retain atomic synchronization. Integrator, Test Pilot and Inspector must independently reassess this changed concurrency structure.
-- The stock isolated harness on Windows passed a backslash suite path to Linux and collected zero tests. The preserved POSIX-path transport run executed unchanged supplied Stage 1 tests/plugin on an internal Docker network: 147 passed. This is separate from a stock CLI scoring claim; subsequent exact-revision evidence must retain the distinction.
-- Current next gate: complete source/diff inspection and full independent regression runs on the repaired candidate, including authentication/control races and semantic import corruption. Acceptance and shipping remain pending; no source change is allowed after acceptance without renewed checks.
+Retain Stage 1 repairs: omission/type/value distinctions, ignored unknown fixture fields, semantic imported retry body/receipt/resource consistency, arbitrary exact numeric JSON equality, bounded amount conversion and guarded authentication commits across reset/import. Prior colocated auth timing failures remain real and cause unproved; bounded external-client adjudication is preserved. Stock Windows harness backslash-to-Linux failure remains separate from passing unchanged isolated supplied suites.
+
+## Current state
+
+Both complete specs read; shipped baseline clean, Stage 2 absent and Docker29.8.1 reachable. All seats have preparation packets; current replies and preservation manifest complete preflight before implementation. No Stage 2 runtime success or acceptance claimed.
