@@ -105,3 +105,90 @@ Next: Foreman routes the exact documentation-child revision for Integrator's
 independent cumulative lifecycle/concurrency/migration review, then Test Pilot's
 independent browser/API falsification, then Inspector's exact-SHA decision.
 Shipper remains gated. Fabricator does not accept this candidate.
+
+## Repair #15: navigation waits for the complete write action
+
+Rejected independent baseline: `8a1498528daa41d188860b9eaa3b8027c839ab79`.
+Tested final runtime/test revision: `41c7162444f2d512f8ef326c196a08b71d4453da`.
+This evidence is a documentation child; runtime bytes remain those tested.
+Read the complete independent report, corrected navigation probe/results/log,
+both complete authoritative specs and production plan. The peer probe remains
+unchanged (SHA256 b57de3ba6cfe6f985eca03f5a7f9ee0637f1f54134876b67bb1e408021ccb7bd).
+
+The original probe independently reproduced premature GET /requests?limit=200
+while POST /payments was withheld, exit1, with correct900 post-success balance.
+Repair tracks pending mutations and complete browser action refreshes. Route,
+history and logout navigation waits, and only the latest queued destination
+proceeds after confirmed success. Refused/uncertain actions discard their queued
+navigation, leaving feedback/forms and original retry identity available. A later
+explicit navigation remains usable. Logout clears its session after the write.
+Existing wallet/list read generations still enforce latest refresh wins.
+
+Stage1 §§1–11 and Stage2 monetary/authorization/snapshot behavior are inherited
+unchanged: service.py/Dockerfile/CSS/HTML Git blobs did not change in this repair.
+The browser preserves decimal parsing/formatting, all six routes, status/privacy,
+split ordering/zeros, seven-path original receipt semantics, competing-client
+refusal refresh, lost-response recovery and signed-in Stage1 migration.
+Auth hashing, resource limits and5s/10s transport constraints are unchanged.
+
+Exact command argv/exits/timings, topology, hashes and retained failures:
+`C:\Users\DELL\Documents\ALIVE FACTORY\checks\pocketful-fabricator-stage2-repair15`.
+Executed `python ...\run.py baseline`, `repaired`, `repaired-v2`, and `final-lf`;
+each uses a new evidence directory and retains earlier outputs. The runner builds
+with Docker desktop-linux --no-cache, source/default8080 and destination8098 on
+an internal network, each2CPU/2GiB/no mounts. Separate client shares only the
+source network namespace, outside its quota, enabling localhost Chromium.
+Actual shipped Stage1 runs at8099; its source hash remains7bb43b5...f45c0a9.
+`expanded.py` verifies literal committed runtime bytes and original probe identity.
+`close.py` records final clean HEAD, runtime identity,333 preservation hashes and
+owned-container cleanup. No credentials or snapshots are written to these logs.
+
+Final exact-LF observations (final-lf/commands.json and corresponding logs):
+
+| Check | Result |
+|---|---|
+| Unchanged corrected peer navigation probe |PASS, no GET before withheld write success, post-success900. |
+| Fabricator navigation matrix |14 groups PASS: wallet pay/request/authorize/split, request pay/decline/cancel, capture/void, refused/uncertain same-key retry, latest destination, history and logout. |
+| Retained independent authored browser matrix, executed by Fabricator |9 groups PASS, no page errors or unexpected asset origins; this is not independent acceptance. |
+| Existing Fabricator browser faults/viewport matrix |7 groups PASS, six375/1440 routes and migration/retry/latest-refresh/capture/release retained; screenshots preserved. |
+| Retained independent API matrix, executed by Fabricator |15 groups/737 calls PASS, maximum0.219s. |
+| Fabricator cumulative HTTP |327 calls PASS, maximum0.121s, including actual shipped old export/token/request/retry continuity. |
+| Seven-path numeric HTTP |963 calls PASS, maximum0.166s. |
+| Unchanged supplied Stage1 |147 passed in48.13s, one readonly cache warning. |
+| Unchanged supplied Stage2 |35 passed in64.13s, same cache warning. |
+| Preservation |All333 hashes match; Stage1/root plan/evidence unchanged. |
+
+Final image: sha256:bb64c24e1a6497c7e37e226f0df1147e5b42aee33e67241de3c0d70e7266b296.
+Literal committed LF/image hashes: service.py866c89057a4d0ca689f305e44e71295e2462d29730974c8365a3153a774a227d;
+app.jsc3de16565e9580806eb98c83e4223ede5e0a3240267f9513520e56db8dd73078;
+style.css7a935f89e4db83dd016eec45ac67486ae905dcfcaa78267dfb1ba08c4b3afa84.
+Service logs in the final repair run were empty. Pending-write desktop and mobile
+wallet screenshots were visually reviewed; controls/loading/available hierarchy
+remain clear. Runtime assets are bundled; no new runtime dependencies.
+
+Retained repair history: the first network-only barrier passed the original probe
+but an added latest-destination check found stale1000 on Reservations after a
+confirmed100 transfer (expected900). repaired/navigation-outcomes.log is retained.
+Holding the complete action refresh fixed this, and all assertions remain.
+Git archive on this host converted files to CRLF under core.autocrlf=true;
+repaired-v2 passed but raw hashes differed. Final-lf restores each archived file
+from exact Git blob bytes, rebuilds and reruns the full selected checks. The earlier
+converted runs and identity distinction remain; final raw hashes now match Git.
+
+**D2 remains unresolved:** the independent original external-client cold50-login
+TimeoutError,48 BrokenPipeError response-write records and incomplete failed-wave
+final assertions are preserved at the Integrator evidence root. Two predeclared
+fresh cold waves passed50/50 but do not prove cause or erase the failure. Reviewed
+their phase/final-state/cgroup evidence and the frozen diagnostic; there is no
+measured root cause supporting a hash/timeout/resource change. No new cold auth
+workload or speculative authentication repair was performed in #15.
+
+**D3 remains unresolved:** TTL1e12 independently produces datetime.max, not exact
+created_at+TTL. Saturation is not claimed compliant; no undocumented maximum or
+calendar repair was introduced. Inspector/Foreman adjudication remains necessary.
+Finite schedules/Chromium checks do not prove every interleaving/browser. Original
+Stage1 and Stage2 failure histories remain intact. No self-acceptance or shipping.
+
+Next: Foreman routes the exact final documentation-child SHA for renewed
+independent Integrator navigation/retry/freshness and cumulative review, then
+Test Pilot and Inspector with D2/D3 evidence visible. Source stops at handoff.
