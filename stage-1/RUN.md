@@ -14,7 +14,7 @@ needed. Stop the foreground container with Ctrl+C.
 The implementation uses Python's standard library only. State is in memory and is
 ephemeral. A process-wide transaction lock covers reads, writes, idempotency claims,
 and control operations, making committed states observable atomically. Passwords
-use salted scrypt. JSON decimal/exponent amounts are parsed exactly, and balances
+use salted scrypt. JSON numbers retain exact digits and arbitrary exponents, and balances
 use integer arithmetic. Idempotency compares a tagged canonical JSON value tree,
 scoped by caller, HTTP method and path; successful responses are stored separately
 from mutable records.
@@ -45,4 +45,10 @@ Additional reset type/rollback and imported retry consistency regressions:
 
 ```sh
 python stage-1/repair_checks.py http://localhost:8080 http://localhost:8091
+```
+
+Exact numeric identity, extreme exponents, amount rollback and portable retries:
+
+```sh
+python stage-1/numeric_checks.py http://localhost:8080 http://localhost:8091
 ```

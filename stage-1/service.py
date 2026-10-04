@@ -1,7 +1,6 @@
 """Pocketful: single-process transactional, exact-minor-unit HTTP service."""
 import copy
 import datetime as dt
-from decimal import Decimal
 import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -9,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
 from urllib.parse import urlsplit, parse_qs
 
@@ -17,6 +17,49 @@ LOCK = threading.RLock()
 HANDLE = re.compile(r"[a-z0-9_]{1,20}\Z")
 EMAIL = re.compile(r"[^\s@]+@[^\s@]+\Z")
 STATUSES = {"pending", "paid", "declined", "cancelled"}
+# JSON has no integer-token digit limit. Values are validated by endpoint rules.
+sys.set_int_max_str_digits(0)
+
+
+class JSONNumber:
+    """Exact finite decimal value, without a machine-sized exponent or expansion."""
+    def __init__(self, token):
+        mantissa, separator, exponent = token.lower().partition("e")
+        self.negative = mantissa.startswith("-")
+        mantissa = mantissa.lstrip("-")
+        whole, point, fraction = mantissa.partition(".")
+        digits = (whole + fraction).lstrip("0")
+        if not digits:
+            self.negative, self.digits, self.exponent = False, "0", 0
+            return
+        trimmed = digits.rstrip("0")
+        self.digits = trimmed
+        self.exponent = (int(exponent) if separator else 0) - len(fraction) + len(digits) - len(trimmed)
+
+    def identity(self):
+        if self.digits == "0":
+            return "0"
+        return ("-" if self.negative else "") + self.digits + "e" + str(self.exponent)
+
+    def bounded_integer(self, low, high):
+        if self.digits == "0":
+            value = 0
+        else:
+            # A normalized coefficient has no trailing zeros: a negative exponent
+            # is fractional. Check size before constructing any power of ten.
+            if self.exponent < 0 or len(self.digits) + self.exponent > len(str(max(abs(low), abs(high)))):
+                fail()
+            value = int(self.digits) * 10 ** self.exponent
+            if self.negative:
+                value = -value
+        if not low <= value <= high:
+            fail()
+        return value
+
+    def __eq__(self, other):
+        if type(other) is int:
+            other = JSONNumber(str(other))
+        return isinstance(other, JSONNumber) and self.identity() == other.identity()
 
 
 class APIError(Exception):
@@ -50,9 +93,9 @@ def string(body, key, default=None, maximum=None, special=False):
 
 
 def integer(value, low, high):
-    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
-        fail()
-    if isinstance(value, Decimal) and (not value.is_finite() or value != value.to_integral_value()):
+    if isinstance(value, JSONNumber):
+        return value.bounded_integer(low, high)
+    if type(value) is not int:
         fail()
     if not low <= value <= high:
         fail()
@@ -87,16 +130,9 @@ def canonical(value):
         return ["null"]
     if isinstance(value, bool):
         return ["bool", value]
-    if isinstance(value, (int, Decimal)):
-        number = Decimal(value)
-        sign, digits, exponent = number.as_tuple()
-        digits = list(digits)
-        if not any(digits):
-            return ["number", "0"]
-        while digits[-1] == 0:
-            digits.pop()
-            exponent += 1
-        return ["number", ("-" if sign else "") + "".join(map(str, digits)) + "e" + str(exponent)]
+    if isinstance(value, (int, JSONNumber)):
+        number = value if isinstance(value, JSONNumber) else JSONNumber(str(value))
+        return ["number", number.identity()]
     if isinstance(value, str):
         return ["string", value]
     if isinstance(value, list):
@@ -138,7 +174,7 @@ def fixture_integer(body, key, low, high):
     if key not in body:
         fail(message="Missing " + key)
     value = body[key]
-    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
+    if isinstance(value, bool) or not isinstance(value, (int, JSONNumber)):
         fail(400, "malformed_request")
     return integer(value, low, high)
 
@@ -442,7 +478,7 @@ def validate_snapshot(body):
             if tag == "null":
                 return None
             if tag == "number":
-                return Decimal(tree[1])
+                return JSONNumber(tree[1])
             if tag == "array":
                 return [original_body(item) for item in tree[1]]
             if tag == "object":
@@ -508,7 +544,7 @@ def validate_snapshot(body):
         # Stored API responses contain only integer numbers. Restore integer-valued
         # exponent/decimal encodings too, without ever rounding fractional input.
         def native(value):
-            if isinstance(value, Decimal):
+            if isinstance(value, JSONNumber):
                 return integer(value, -MAX_BALANCE * max(1, len(state["users"])), MAX_BALANCE * max(1, len(state["users"])))
             if isinstance(value, list):
                 return [native(item) for item in value]
@@ -744,9 +780,9 @@ class Handler(BaseHTTPRequestHandler):
             body = {}
             if raw:
                 try:
-                    body = json.loads(raw.decode("utf-8"), parse_float=Decimal,
+                    body = json.loads(raw.decode("utf-8"), parse_float=JSONNumber,
                                       parse_constant=lambda _: fail(400, "malformed_request"))
-                except (ValueError, UnicodeError, RecursionError):
+                except (ValueError, UnicodeError, ArithmeticError, RecursionError):
                     fail(400, "malformed_request")
                 object_value(body)
             elif self.command == "POST" and not re.fullmatch(r"/requests/[^/]+/(decline|cancel)", urlsplit(self.path).path):
@@ -762,7 +798,7 @@ class Handler(BaseHTTPRequestHandler):
         except APIError as error:
             status = error.status
             encoded = json.dumps({"error": {"code": error.code, "message": error.message}}).encode()
-        except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+        except (ValueError, TypeError, KeyError, ArithmeticError, RecursionError):
             status = 400
             encoded = b'{"error":{"code":"malformed_request","message":"Invalid request"}}'
         self.send_response(status)
