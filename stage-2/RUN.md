@@ -44,5 +44,15 @@ and optionally a shipped Stage1 service to exercise old exports:
 python stage-2/checks.py http://localhost:18886 http://localhost:18887 http://localhost:18888
 ```
 
+Exact numeric identity and portable retry regressions cover all seven paths:
+
+```sh
+python stage-2/numeric_checks.py http://localhost:18886 http://localhost:18887
+```
+
+For browser fault/viewport checks, a development environment with Playwright and
+Chromium can run `browser_checks.py` with the Stage2 URL, shipped Stage1 URL and
+a screenshot output directory. These testing dependencies are not runtime dependencies.
+
 The final evidence document records actual executed tests, browser screenshots,
 resource/asset checks and exact revision. Acceptance belongs to independent seats.

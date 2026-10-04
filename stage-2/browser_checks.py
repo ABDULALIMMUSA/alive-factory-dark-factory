@@ -54,6 +54,7 @@ with sync_playwright() as p:
         route.fulfill(response=response)
     page.route('**/*',bridge);login(page);pay_form(page);page.get_by_test_id('pay-submit').click()
     expect(page.get_by_test_id('pay-uncertain')).to_be_visible();expect(page.get_by_test_id('pay-error')).to_have_count(0)
+    page.screenshot(path=str(out/'payment-uncertain-desktop.png'),full_page=True)
     snapshot=api('/_test/export',base=OLD).json();assert api('/_test/import',snapshot).status_code==204;upgraded=True
     page.get_by_test_id('pay-submit').click();expect(page.get_by_test_id('wallet-balance')).to_have_attribute('data-amount','800')
     expect(page.get_by_test_id('pay-uncertain')).to_have_count(0);expect(page.get_by_test_id('pay-error')).to_have_count(0)
@@ -68,6 +69,7 @@ with sync_playwright() as p:
     api('/payments',{'to_handle':'b','amount':900},token('a'),'other-client')
     page.get_by_test_id('pay-submit').click();expect(page.get_by_test_id('pay-error')).to_be_visible()
     expect(page.get_by_test_id('wallet-available')).to_have_attribute('data-amount','100')
+    page.screenshot(path=str(out/'payment-refused-desktop.png'),full_page=True)
     expect(page.get_by_test_id('pay-amount')).to_have_value('3.00');expect(page.get_by_test_id('pay-uncertain')).to_have_count(0)
     checked('known competing-client refusal refreshes funds/feed, preserves inputs and differs from uncertainty');context.close()
 
@@ -104,8 +106,10 @@ with sync_playwright() as p:
     expect(page.get_by_test_id('authorization-capture-amount-'+aid)).to_have_value('6.00')
     page.get_by_test_id('authorization-capture-amount-'+aid).fill('2.00');page.locator('#partial-'+aid).check();page.get_by_test_id('authorization-capture-'+aid).click()
     expect(page.get_by_test_id('authorization-capture-amount-'+aid)).to_have_value('4.00');expect(page.get_by_test_id('authorization-item-'+aid)).to_have_attribute('data-status','open')
+    page.screenshot(path=str(out/'capture-partial-desktop.png'),full_page=True)
     page.get_by_test_id('authorization-capture-'+aid).click();expect(page.get_by_test_id('authorization-item-'+aid)).to_have_attribute('data-status','captured')
     expect(page.get_by_test_id('authorization-captured-'+aid)).to_have_text('6.00 EUR');expect(page.get_by_test_id('wallet-available')).to_have_attribute('data-amount','700')
+    page.screenshot(path=str(out/'capture-final-desktop.png'),full_page=True)
     checked('browser partial capture, remaining default, final close and balance update');context.close()
 
     seed();ta=token('a');hold=api('/authorizations',{'to_handle':'b','amount':250},ta,'visual-hold').json()
