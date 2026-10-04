@@ -268,3 +268,59 @@ The exact repaired Git SHA and six-field handoff are also recorded at
 and shared task #7. Foreman next routes that SHA through renewed Integrator and
 Test Pilot checks, then Inspector. Shipper remains gated until independent
 acceptance. No self-acceptance is claimed.
+
+## Repair #8: documented reset schema and ignored request linkage
+
+Blocked predecessor: `7d72f8054d19e8bfe3d91c5c8f28fcbaeae115fe`, Foreman's
+documentation-only child of R7. Full independent report read:
+`C:\Users\DELL\Documents\ALIVE FACTORY\checks\pocketful-integrator-7d72f80\report.md`.
+Unchanged HTTP seeded reproducer and adapter:
+`C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-integrator-seeded-roundtrip.py`
+and `C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-integrator-r1-r2.py`.
+
+Before edits, Fabricator reproduced twelve reset failures out of seventeen cases
+in a 2 CPU/2 GiB, network-none container: string/bool/object unknown payment_id
+members were rejected for each legal request status. Five positive controls
+passed; 32 HTTP calls, exit1. These were reset acceptance failures, not observed
+import failures: rejected cases never reached import.
+
+Correction removes reading/validation of the undocumented fixture request
+payment_id. Reset ignores this member regardless of value/status. Seeded request
+response linkage remains null; API-created links and opaque export/import keep
+their existing validation. The R7 text describing seeded-link validation records
+old behavior and is superseded by this correction. No import/authentication or
+transaction logic changed.
+
+Meaningful source/test repair commit: `16eda9cd810ff3c595a0e976a10d06f62c539b8f`.
+Host/image service SHA-256 matched:
+`63d85c0239eb61c3fd614dc4b251581e08095e49c7ec873a9a3e2b9134de0a38`.
+Image: `sha256:35293759ccc51e98ee3140427852c17651cc791a66c99858810524606c2bd147`.
+This evidence update changes documentation only.
+
+Initial repaired offline observation: unchanged seeded script passed17 cases /
+68 calls; every case reset204 and unchanged-import204. Expanded repair suite
+passed653 calls, max0.206s. It checks seven ignored linkage values across all four
+statuses, other unknown response/link fields, unchanged net balances, seeded
+portable round trips, and API-created links/replay after import. Existing R1/R2
+guards and auth/control races remain. Call counts can vary with token-race timing.
+
+Commands (scripts copied unchanged into /tmp as r1r2.py, seeded.py, repair.py):
+
+```text
+docker --context desktop-linux build -t pocketful-fabricator:r8-repro ./stage-1
+docker --context desktop-linux run -d --name pocketful-fabricator-r8-repro --network none --cpus=2 --memory=2g -e PORT=18882 pocketful-fabricator:r8-repro
+docker --context desktop-linux exec pocketful-fabricator-r8-repro python /tmp/seeded.py --source http://127.0.0.1:18882 --destination http://127.0.0.1:18882
+python -m py_compile stage-1/service.py stage-1/repair_checks.py
+git diff --check
+docker --context desktop-linux build -t pocketful-fabricator:r8 ./stage-1
+docker --context desktop-linux run -d --name pocketful-fabricator-r8-offline --network none --cpus=2 --memory=2g -e PORT=18882 pocketful-fabricator:r8
+docker --context desktop-linux exec pocketful-fabricator-r8-offline python /tmp/seeded.py --source http://127.0.0.1:18882 --destination http://127.0.0.1:18882
+docker --context desktop-linux exec pocketful-fabricator-r8-offline python /tmp/repair.py http://127.0.0.1:18882
+```
+
+Final exact SHA, full separate-container/offline rerun results, commands and
+risks are retained in the six-field report at
+`C:\Users\DELL\Documents\ALIVE FACTORY\pocketful-fabricator-repair-8-evidence.md`,
+also linked in #8 and Foreman's visible handoff. Private snapshots remain in RAM.
+Foreman next routes the repaired exact SHA through renewed Integrator/Test Pilot
+checks and then Inspector. No acceptance is claimed.
