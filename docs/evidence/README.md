@@ -1,10 +1,10 @@
 # Evidence copies
 
-These textual evidence files were copied from production and closeout evidence on 2026-10-05. All except `stage-1-shipping.md` preserve the source bytes exactly. The shipping report removes trailing whitespace (spaces, tabs or CR before LF/EOF) only for packaging; its wording and all other bytes are preserved. They preserve their original revision, scope, failure history and author attribution. Absolute paths inside them identify original local logs; those logs are not bundled here. These copies supplement the production room export and Git history; they do not replace either. Current closeout model evidence does not prove historical production model selection.
+These textual evidence files were copied from production and closeout evidence on 2026-10-05. All except `stage-1-shipping.md` and `stage-1-final-windows-error-report.json` preserve the source bytes exactly. The shipping report removes trailing whitespace (spaces, tabs or CR before LF/EOF) only for packaging; its wording and all other bytes are preserved. The Windows error report has 33 CRLF line endings converted to LF in the committed package, with unchanged JSON content. They preserve their original revision, scope, failure history and author attribution. Absolute paths inside them identify original local logs; those logs are not bundled here. These copies supplement the production room export and Git history; they do not replace either. Current closeout model evidence does not prove historical production model selection.
 
 The earlier Stage 2 blocked receipt is historical. The later exact-900 reports record continued independent verification without acceptance or shipment. No supplied-check result proves hidden-test conformance.
 
-| Repository file | SHA256 of copied bytes |
+| Repository file | SHA256 of packaged bytes |
 |---|---|
 | [stage-1-factory-receipt.md](stage-1-factory-receipt.md) | `671feb6c5018bac0702bcffb190642b1c09ab915c9f82fb59bd7c922b75a1a42` |
 | [stage-1-inspector-accept.md](stage-1-inspector-accept.md) | `4a6adefd100134ddad0781bb77417d13edd1c92375b26002ee85f717ba5a293d` |
@@ -17,11 +17,13 @@ The earlier Stage 2 blocked receipt is historical. The later exact-900 reports r
 | [stage-1-final-linux-report.json](stage-1-final-linux-report.json) | `08e0b98ae6aa9826c3cb45df98da62909ed173d0aa2b1f09d2ce787df647001f` |
 | [stage-2-final-worktree-report.json](stage-2-final-worktree-report.json) | `29a226de4db5ce1097c3dafc6de7845d812dc99a330da9a779c8e7582052f94f` |
 | [stage-2-final-lf-report.json](stage-2-final-lf-report.json) | `6bc40bd20edcc4a65e211e3365025fd091aaf01874b55af71b98238deb83b759` |
-| [stage-1-final-windows-error-report.json](stage-1-final-windows-error-report.json) | `0052171d0728b08eded5b838f67eb68817ddd2f09e6da8066a290e15e6ee82ca` |
+| [stage-1-final-windows-error-report.json](stage-1-final-windows-error-report.json) | `6ecd30476d26164f0d2176c174d7963b399d54e87a79450f0b45985113851128` |
 | [model-foreman-closeout.md](model-foreman-closeout.md) | `aa86b89c3e99eaaf5c7be5d6149682019b3ee3068265d2ebf8c9bd86f41971de` |
 
 
 Shipping report formatting provenance: original source SHA256 `389be04636fd83a4d247004f310391fa213c2975f971cd374bea9093bd5b00fb`; packaged SHA256 `c88a9764398e668d342373cebb71c2abbecffa1b2fbc9a0d3e8d30f28588182d`. The original source at the catalogue path below remains unchanged. This formatting-adjusted copy is not byte-identical to that source.
+
+Windows error report formatting provenance: original source SHA256 `0052171d0728b08eded5b838f67eb68817ddd2f09e6da8066a290e15e6ee82ca`; committed LF/package SHA256 `6ecd30476d26164f0d2176c174d7963b399d54e87a79450f0b45985113851128`. Candidate `e78cfb7502c16c1d55b57267110b96805edb5b49` normalized 33 CRLF line endings to LF. The original source at the catalogue path below remains unchanged. This second formatting derivative retains the Windows zero-collection error and is not byte-identical to its source.
 
 Original source catalogue:
 
