@@ -37,7 +37,7 @@ Runtime dependencies and browser assets are bundled. State is in memory and clea
 - [mandates/](mandates/): six generic seat instructions; [declaration evidence](docs/MANDATE-DECLARATIONS.md) distinguishes verified configuration from missing proof.
 - [Architecture and production line](docs/ARCHITECTURE.md): system boundaries and responsibility flow.
 - [Evidence timeline](docs/EVIDENCE-TIMELINE.md): discovery, rejection, repairs, independent re-verification and shipment.
-- [Evidence copies](docs/evidence/README.md): portable textual receipts and reports with hashes and disclosed formatting adjustments to the shipping report and Windows error report.
+- [Evidence copies](docs/evidence/README.md): portable textual receipts and reports with hashes and the shipping report's disclosed trailing-whitespace adjustment.
 - [Judge summary](docs/JUDGE-SUMMARY.md), [90-second demo script](docs/DEMO-90-SECONDS.md) and [presentation outline](docs/PRESENTATION-OUTLINE.md).
 - [plan.md](plan.md): preserved historical Stage 2 continuation plan. Its future-tense checks describe the dispatch at that checkpoint; later reports record what was actually executed. It provides no Stage 2 shipping authority.
 
