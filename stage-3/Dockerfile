@@ -1,0 +1,8 @@
+FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
+WORKDIR /app
+COPY service.py /app/service.py
+COPY static /app/static
+ENV PORT=8080 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+EXPOSE 8080
+USER 65534:65534
+CMD ["python", "/app/service.py"]

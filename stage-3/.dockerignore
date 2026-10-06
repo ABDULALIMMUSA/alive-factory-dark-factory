@@ -1,0 +1,5 @@
+*
+!service.py
+!Dockerfile
+!static/
+!static/**
