@@ -22,7 +22,7 @@ LAST_CLOCK = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
 
 def _next_request_clock():
     global LAST_CLOCK
-    current = request_clock()
+    current = dt.datetime.now(dt.timezone.utc)
     with CLOCK_LOCK:
         if current <= LAST_CLOCK:
             current = LAST_CLOCK + dt.timedelta(microseconds=1)
