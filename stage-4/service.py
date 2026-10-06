@@ -1678,20 +1678,21 @@ def _stage4_refund(uid, path, body, key):
     match = re.fullmatch(r"/payments/([^/]+)/refunds", path)
     if match is None:
         fail(404, "not_found")
-    target_id = match[1]
-    target = STATE["payments"].get(target_id)
-    if target is None:
-        fail(404, "not_found")
-    if _stage4_is_refund(target_id):
-        fail(422, "invalid_refund_target")
-    if target["to_user_id"] != uid:
-        fail(403, "forbidden")
 
+    # Claimed idempotency keys resolve before endpoint validation/business checks.
     replay = _idempotency_lookup(STAGE4_META["refund_idempotency"], uid, path, key, body)
     if replay is not None:
         return 200, _decorate_payment_stage4(replay)
 
     value = amount(body)
+    target_id = match[1]
+    target = STATE["payments"].get(target_id)
+    if target is None:
+        fail(404, "not_found")
+    if target["to_user_id"] != uid:
+        fail(403, "forbidden")
+    if _stage4_is_refund(target_id):
+        fail(422, "invalid_refund_target")
     if _stage4_refunded_total(target_id) + value > _stage4_current_amount(target_id):
         fail(422, "refund_exceeds_payment")
 
@@ -1704,7 +1705,6 @@ def _stage4_refund(uid, path, body, key):
 
     record = payment_record(STATE, payer, receiver, value, target["note"], target["visibility"],
                             timestamp=now())
-    # Refunds are independent payments and never relink requests/authorizations/settlements.
     record["request_id"] = None
     record["settlement_id"] = None
     record["authorization_id"] = None
@@ -1726,18 +1726,12 @@ def _stage4_batch_item(raw):
     required = {"payment_id", "expected_revision", "amount", "effective_at", "reason"}
     if not required.issubset(raw):
         fail()
+
     pid = raw.get("payment_id")
     if not isinstance(pid, str):
         fail()
-    payment = STATE["payments"].get(pid)
-    if payment is None:
-        fail(404, "not_found")
-    if payment.get("authorization_id") is not None or _stage4_is_refund(pid):
-        fail(422, "linked_payment_immutable")
     expected = integer(raw.get("expected_revision"), 1, 1000000000)
     corrected = integer(raw.get("amount"), 0, 1000000000)
-    if _stage4_refunded_total(pid) > corrected:
-        fail(422, "refund_exceeds_payment")
     effective_text = raw.get("effective_at")
     effective = _parse_instant(effective_text)
     if effective > dt.datetime.now(dt.timezone.utc):
@@ -1745,10 +1739,20 @@ def _stage4_batch_item(raw):
     reason = raw.get("reason")
     if not isinstance(reason, str) or not 1 <= len(reason) <= 200:
         fail()
+
+    payment = STATE["payments"].get(pid)
+    if payment is None:
+        fail(404, "not_found")
+    if payment.get("authorization_id") is not None or _stage4_is_refund(pid):
+        fail(422, "linked_payment_immutable")
+
     _ensure_revisions()
     latest = STAGE3_META["revisions"][pid][-1]
     if expected != latest["revision"]:
         fail(409, "stale_revision")
+    if _stage4_refunded_total(pid) > corrected:
+        fail(422, "refund_exceeds_payment")
+
     return {"payment": payment, "pid": pid, "latest": latest, "amount": corrected,
             "effective_at": effective_text, "effective": effective, "reason": reason}
 
