@@ -1,70 +1,52 @@
-# Pocketful Stage 2
+# Pocketful Stage 4
 
-From the repository root, build and start the cumulative browser and HTTP API:
+Stage 4 is the cumulative Pocketful service: all Stage 1–3 behavior plus refunds and atomic correction batches.
 
-```sh
-docker build -t pocketful-stage-2 ./stage-2
-docker run --rm --name pocketful-stage-2 --cpus=2 --memory=2g -e PORT=18886 -p 18886:18886 pocketful-stage-2
-```
+## Build and run
 
-Open http://localhost:18886 in a browser. Health is GET /health. Default PORT is
-8080; choose any unused port and map it to the matching container PORT. The
-example avoids an existing host8080 service. Stop the foreground container with
-Ctrl+C. All assets and dependencies are bundled; runtime needs no outbound access.
-The image is self-contained, standard-library Python and vanilla HTML/CSS/JS,
-running as an unprivileged user. State is intentionally ephemeral on restart.
-
-API requests to /requests and /authorizations return JSON by default. Browser
-navigation with Accept: text/html receives the app. All required screens are
-directly reachable. Sign up to create a zero-balance account; the test reset API
-can seed balances and existing history. No deposit/top-up endpoint is provided.
-
-Wallet totals move only through immediate payments, request payments, settlements
-and captures. Open authorization remainders reserve funds; available is total
-minus held. Reads and writes evaluate deadline expiry under the same transaction
-lock used for money, captures, receipts and snapshots. Password verification runs
-outside that lock, rechecking the current account before committing a session.
-JSON numeric identity is exact across integral/fraction/exponent forms.
-
-Seven write paths use caller/method/path-scoped keys and immutable original
-responses. Browser payment retries retain the submitted body/key after success
-or uncertainty; changed inputs start a new operation. A read generation prevents
-older wallet refreshes from replacing a newer result. Decimal form parsing uses
-integer arithmetic and rejects excess decimal places instead of rounding.
-
-GET /_test/export and POST /_test/import support both this service's snapshots
-and shipped Stage1 exports. Migration preserves accounts, hashes, tokens,
-permissions and original receipts; old cached receipt shapes stay original.
-Snapshots include private credentials. Keep them out of Git and shared logs.
-
-HTTP checks replace isolated service data; pass a second service for portability,
-and optionally a shipped Stage1 service to exercise old exports:
+From the repository root:
 
 ```sh
-python stage-2/checks.py http://localhost:18886 http://localhost:18887 http://localhost:18888
+docker build -t pocketful-stage-4 ./stage-4
+docker run --rm --name pocketful-stage-4 --cpus=2 --memory=2g -e PORT=8080 -p 8080:8080 pocketful-stage-4
 ```
 
-Exact numeric identity and portable retry regressions cover all seven paths:
+Verify:
 
 ```sh
-python stage-2/numeric_checks.py http://localhost:18886 http://localhost:18887
+curl http://localhost:8080/health
 ```
 
-The Fabricator-derived semantic corruption probe adapts the retained Stage1
-probe's export schema guard to Stage2 while preserving its assertions:
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+The browser UI remains available at `http://localhost:8080/`.
+
+## Stage 4 additions
+
+Stage 4 adds:
+
+- `POST /payments/{payment_id}/refunds`;
+- cumulative refund limits against the payment's current corrected amount;
+- immutable refund payments linked through `refund_of`;
+- `POST /correction-batches` for settlement operators;
+- settlement-completeness checks;
+- atomic combined affordability and historical-overdraft checks;
+- shared batch `recorded_at` and `correction_batch_id`;
+- idempotent replay for refunds and correction batches;
+- Stage 1–3 export/import compatibility, including statement snapshots and revision history.
+
+## Official directional harness
+
+Using the pinned event challenge package:
 
 ```sh
-python stage-2/semantic_checks.py --source http://localhost:18886 --destination http://localhost:18887 --revision FULL_GIT_SHA
+python -m harness run --track pocketful --repo /path/to/alive-factory-dark-factory --stage 4 --mode isolated --out /tmp/pocketful-s4
 ```
 
-For browser fault/viewport checks, a development environment with Playwright and
-Chromium can run `browser_checks.py` with the Stage2 URL, shipped Stage1 URL and
-a screenshot output directory. These testing dependencies are not runtime dependencies.
+A successful Stage 4 run should show Stages 1 through 4 passing with `highest contiguous stage: 4` and `claimed stage: 4`.
 
-`navigation_checks.py` exercises pending writes, refusal/uncertainty recovery,
-latest queued destination, history and logout. Run it in a Playwright development
-client sharing the tested service's network namespace, with the service at
-localhost8080. The client stays outside the service CPU/memory quota.
-
-The final evidence document records actual executed tests, browser screenshots,
-resource/asset checks and exact revision. Acceptance belongs to independent seats.
+The released harness is directional only; hidden judging covers additional specification boundaries.
