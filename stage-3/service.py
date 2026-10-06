@@ -1182,6 +1182,33 @@ def _derive_openings():
     return openings
 
 
+
+def _stage3_prepare_seed_times(body):
+    """Validate Stage-3 seeded timestamps before reset mutates live state."""
+    changes = {"payments": {}, "authorizations": {}}
+    current = dt.datetime.now(dt.timezone.utc)
+    for raw in body.get("payments", []) if isinstance(body.get("payments", []), list) else []:
+        if isinstance(raw, dict) and "created_at" in raw:
+            parsed = _parse_instant(raw["created_at"])
+            if parsed > current:
+                fail()
+            changes["payments"][raw.get("id")] = raw["created_at"]
+    for raw in body.get("authorizations", []) if isinstance(body.get("authorizations", []), list) else []:
+        if isinstance(raw, dict) and "created_at" in raw:
+            _parse_instant(raw["created_at"])
+            changes["authorizations"][raw.get("id")] = raw["created_at"]
+    return changes
+
+
+def _stage3_apply_seed_times(changes):
+    for pid, timestamp in changes["payments"].items():
+        if pid in STATE["payments"]:
+            STATE["payments"][pid]["created_at"] = timestamp
+    for aid, timestamp in changes["authorizations"].items():
+        if aid in STATE["authorizations"]:
+            STATE["authorizations"][aid]["created_at"] = timestamp
+
+
 def _stage3_reset_meta():
     global STAGE3_META
     STAGE3_META = _stage3_empty()
@@ -1472,7 +1499,12 @@ def _sync_stage3_after(method, path, response):
         if action:
             record = STATE["authorizations"].get(action[1])
             if record is not None and record["status"] in {"captured", "voided"}:
-                STAGE3_META["auth_closed"].setdefault(record["authorization_id"], now())
+                if record["status"] == "captured" and record.get("payment_ids"):
+                    last_payment = STATE["payments"].get(record["payment_ids"][-1])
+                    closed = last_payment["created_at"] if last_payment else now()
+                else:
+                    closed = now()
+                STAGE3_META["auth_closed"].setdefault(record["authorization_id"], closed)
     if path == "/authorizations":
         if isinstance(response, dict) and "authorizations" in response:
             response = copy.deepcopy(response)
@@ -1490,7 +1522,9 @@ def dispatch(method, path, query, body, authorization, key):
     global STATE, STAGE3_META
 
     if method == "POST" and path == "/_test/reset":
+        seed_times = _stage3_prepare_seed_times(body)
         status, response = stage2_dispatch(method, path, query, body, authorization, key)
+        _stage3_apply_seed_times(seed_times)
         _stage3_reset_meta()
         return status, response
 
