@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: post-submit-stage-checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   stage3:
     runs-on: ubuntu-latest
