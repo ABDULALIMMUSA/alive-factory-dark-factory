@@ -1672,8 +1672,20 @@ class Handler(BaseHTTPRequestHandler):
                 except (ValueError, UnicodeError, ArithmeticError, RecursionError):
                     fail(400, "malformed_request")
                 object_value(body)
-            elif self.command == "POST" and not re.fullmatch(r"/requests/[^/]+/(decline|cancel)|/authorizations/[^/]+/void", urlsplit(self.path).path):
-                fail(400, "malformed_request")
+            elif self.command == "POST":
+                empty_path = urlsplit(self.path).path
+                # Some write contracts use an empty JSON object as a meaningful
+                # default body, while Stage 3/4 field-validation endpoints must
+                # receive {} so they can return validation_failed rather than a
+                # transport-level malformed_request.
+                empty_allowed = (
+                    re.fullmatch(r"/requests/[^/]+/(pay|decline|cancel)", empty_path)
+                    or re.fullmatch(r"/authorizations/[^/]+/(capture|void)", empty_path)
+                    or re.fullmatch(r"/payments/[^/]+/(corrections|refunds)", empty_path)
+                    or empty_path == "/correction-batches"
+                )
+                if not empty_allowed:
+                    fail(400, "malformed_request")
             url = urlsplit(self.path)
             if self.command == "POST" and url.path in {"/auth/signup", "/auth/login"}:
                 status, response = authentication(url.path, body)
