@@ -1157,8 +1157,7 @@ def _strict_after(previous):
 def _revision_one(payment):
     return {"payment_id": payment["payment_id"], "revision": 1,
             "amount": payment["amount"], "effective_at": payment["created_at"],
-            "recorded_at": payment["created_at"], "reason": "",
-            "correction_batch_id": None}
+            "recorded_at": payment["created_at"], "reason": ""}
 
 
 def _ensure_revisions():
@@ -1185,7 +1184,7 @@ def _derive_openings():
 
 def _stage3_prepare_seed_times(body):
     """Validate Stage-3 seeded timestamps before reset mutates live state."""
-    changes = {"payments": {}, "authorizations": {}}
+    changes = {"payments": {}, "authorizations": {}, "closed": {}}
     current = dt.datetime.now(dt.timezone.utc)
     for raw in body.get("payments", []) if isinstance(body.get("payments", []), list) else []:
         if isinstance(raw, dict) and "created_at" in raw:
@@ -1197,6 +1196,11 @@ def _stage3_prepare_seed_times(body):
         if isinstance(raw, dict) and "created_at" in raw:
             _parse_instant(raw["created_at"])
             changes["authorizations"][raw.get("id")] = raw["created_at"]
+        if isinstance(raw, dict) and "closed_at" in raw:
+            closed = _parse_instant(raw["closed_at"])
+            if closed > current:
+                fail()
+            changes["closed"][raw.get("id")] = raw["closed_at"]
     return changes
 
 
@@ -1209,11 +1213,39 @@ def _stage3_apply_seed_times(changes):
             STATE["authorizations"][aid]["created_at"] = timestamp
 
 
+def _stage3_apply_seed_closed(changes):
+    for aid, timestamp in changes.get("closed", {}).items():
+        if aid in STATE["authorizations"] and STATE["authorizations"][aid]["status"] != "open":
+            STAGE3_META["auth_closed"][aid] = timestamp
+
+
 def _stage3_reset_meta():
     global STAGE3_META
     STAGE3_META = _stage3_empty()
     STAGE3_META["openings"] = _derive_openings()
     _ensure_revisions()
+    reset_clock = dt.datetime.now(dt.timezone.utc)
+    for aid, record in STATE["authorizations"].items():
+        status = record["status"]
+        if status == "captured":
+            if record.get("payment_ids"):
+                last = STATE["payments"].get(record["payment_ids"][-1])
+                STAGE3_META["auth_closed"][aid] = last["created_at"] if last else record["created_at"]
+            else:
+                STAGE3_META["auth_closed"][aid] = record["created_at"]
+        elif status == "voided":
+            if record.get("payment_ids"):
+                last = STATE["payments"].get(record["payment_ids"][-1])
+                STAGE3_META["auth_closed"][aid] = last["created_at"] if last else record["created_at"]
+            else:
+                STAGE3_META["auth_closed"][aid] = record["created_at"]
+        elif status == "expired":
+            expiry = _parse_instant(record["expires_at"])
+            created = _parse_instant(record["created_at"])
+            if expiry <= reset_clock:
+                STAGE3_META["auth_closed"][aid] = record["expires_at"]
+            else:
+                STAGE3_META["auth_closed"][aid] = record["created_at"]
 
 
 def _selected_revision(pid, known_at):
@@ -1424,19 +1456,15 @@ def _correction(uid, path, body, key):
     match = re.fullmatch(r"/payments/([^/]+)/corrections", path)
     if match is None:
         fail(404, "not_found")
-    payment = STATE["payments"].get(match[1])
-    if payment is None:
-        fail(404, "not_found")
-    if payment["from_user_id"] != uid:
-        fail(403, "forbidden")
-    if payment.get("settlement_id") is not None or payment.get("authorization_id") is not None:
-        fail(422, "linked_payment_immutable")
 
+    # Idempotency claim resolution precedes body/business validation.
     replay = _idempotency_lookup(STAGE3_META["correction_idempotency"], uid, path, key, body)
     if replay is not None:
         return 200, replay
 
-    if set(("expected_revision", "amount", "effective_at", "reason")) - set(body):
+    # This endpoint specifies validation_failed for all invalid fields/types.
+    required = {"expected_revision", "amount", "effective_at", "reason"}
+    if not required.issubset(body):
         fail()
     expected = integer(body.get("expected_revision"), 1, 1000000000)
     corrected_amount = integer(body.get("amount"), 0, 1000000000)
@@ -1449,11 +1477,20 @@ def _correction(uid, path, body, key):
     if not isinstance(reason, str) or not 1 <= len(reason) <= 200:
         fail()
 
+    payment = STATE["payments"].get(match[1])
+    if payment is None:
+        fail(404, "not_found")
+    if payment["from_user_id"] != uid:
+        fail(403, "forbidden")
+    if payment.get("settlement_id") is not None or payment.get("authorization_id") is not None:
+        fail(422, "linked_payment_immutable")
+
     _ensure_revisions()
     history = STAGE3_META["revisions"][payment["payment_id"]]
     latest = history[-1]
     if expected != latest["revision"]:
         fail(409, "stale_revision")
+
     difference = corrected_amount - latest["amount"]
     sender = STATE["users"][payment["from_user_id"]]
     receiver = STATE["users"][payment["to_user_id"]]
@@ -1472,7 +1509,7 @@ def _correction(uid, path, body, key):
     recorded = _strict_after(latest["recorded_at"])
     revision = {"payment_id": payment["payment_id"], "revision": latest["revision"] + 1,
                 "amount": corrected_amount, "effective_at": effective_text,
-                "recorded_at": recorded, "reason": reason, "correction_batch_id": None}
+                "recorded_at": recorded, "reason": reason}
     history.append(revision)
     known_at = _parse_instant(recorded)
     if not _history_nonnegative(known_at, [effective]):
@@ -1526,6 +1563,7 @@ def dispatch(method, path, query, body, authorization, key):
         status, response = stage2_dispatch(method, path, query, body, authorization, key)
         _stage3_apply_seed_times(seed_times)
         _stage3_reset_meta()
+        _stage3_apply_seed_closed(seed_times)
         return status, response
 
     if method == "GET" and path == "/_test/export":
