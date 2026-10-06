@@ -1,0 +1,86 @@
+name: Post-submit Pocketful stage checks
+
+on:
+  push:
+    branches: [post-submit/stages-2-4]
+    paths:
+      - 'stage-2/**'
+      - 'stage-3/**'
+      - 'stage-4/**'
+      - '.github/workflows/post-submit-stage-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-submit-stage-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stage3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch pinned official challenge
+        run: |
+          git clone https://github.com/band-ai/dark-factory-wearedevs.git "$RUNNER_TEMP/challenge"
+          git -C "$RUNNER_TEMP/challenge" checkout 803560d2a678ace1414465c098eb0ab5380ffade
+      - name: Install harness
+        run: |
+          python -m pip install -r "$RUNNER_TEMP/challenge/harness/requirements.txt"
+          python -m playwright install --with-deps chromium
+      - name: Run Stage 3 cumulative isolated harness
+        working-directory: ${{ runner.temp }}/challenge
+        run: |
+          python -m harness run --track pocketful --repo "$GITHUB_WORKSPACE" --stage 3 --mode isolated --out "$RUNNER_TEMP/s3"
+          cat "$RUNNER_TEMP/s3/report.json"
+      - name: Upload Stage 3 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-report
+          path: ${{ runner.temp }}/s3
+
+  stage4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch pinned official challenge
+        run: |
+          git clone https://github.com/band-ai/dark-factory-wearedevs.git "$RUNNER_TEMP/challenge"
+          git -C "$RUNNER_TEMP/challenge" checkout 803560d2a678ace1414465c098eb0ab5380ffade
+      - name: Install harness
+        run: |
+          python -m pip install -r "$RUNNER_TEMP/challenge/harness/requirements.txt"
+          python -m playwright install --with-deps chromium
+      - name: Run Stage 4 cumulative isolated harness
+        working-directory: ${{ runner.temp }}/challenge
+        run: |
+          python -m harness run --track pocketful --repo "$GITHUB_WORKSPACE" --stage 4 --mode isolated --out "$RUNNER_TEMP/s4"
+          cat "$RUNNER_TEMP/s4/report.json"
+      - name: Run post-submit Stage 4 probes
+        run: |
+          docker build -t alive-pocketful-stage4 "$GITHUB_WORKSPACE/stage-4"
+          docker run -d --rm --name alive-pocketful-stage4 -e PORT=8080 -p 18080:8080 alive-pocketful-stage4
+          trap 'docker stop alive-pocketful-stage4 >/dev/null 2>&1 || true' EXIT
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null; then break; fi
+            sleep 0.25
+          done
+          python "$GITHUB_WORKSPACE/stage-4/postsubmit_checks.py" http://127.0.0.1:18080
+
+      - name: Upload Stage 4 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-report
+          path: ${{ runner.temp }}/s4
