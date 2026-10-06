@@ -63,6 +63,17 @@ jobs:
         run: |
           python -m harness run --track pocketful --repo "$GITHUB_WORKSPACE" --stage 4 --mode isolated --out "$RUNNER_TEMP/s4"
           cat "$RUNNER_TEMP/s4/report.json"
+      - name: Run post-submit Stage 4 probes
+        run: |
+          docker build -t alive-pocketful-stage4 "$GITHUB_WORKSPACE/stage-4"
+          docker run -d --rm --name alive-pocketful-stage4 -e PORT=8080 -p 18080:8080 alive-pocketful-stage4
+          trap 'docker stop alive-pocketful-stage4 >/dev/null 2>&1 || true' EXIT
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null; then break; fi
+            sleep 0.25
+          done
+          python "$GITHUB_WORKSPACE/stage-4/postsubmit_checks.py" http://127.0.0.1:18080
+
       - name: Upload Stage 4 report
         if: always()
         uses: actions/upload-artifact@v4
