@@ -897,7 +897,7 @@ def authentication(path, body):
             return session(state, user, 200)
 
 
-def dispatch(method, path, query, body, authorization, key):
+def stage2_dispatch(method, path, query, body, authorization, key):
     global STATE
     if method == "GET" and path == "/health":
         return 200, {"status": "ok"}
@@ -1107,6 +1107,451 @@ def dispatch(method, path, query, body, authorization, key):
         state["idempotency"].append({"user_id": uid, "method": method, "path": path, "key": key,
                                      "body": body_value, "response": copy.deepcopy(response)})
     return 201, copy.deepcopy(response)
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: temporal statements, immutable payment revisions and corrections.
+#
+# The Stage 2 ledger remains byte-compatible so Stage 1/2 exports continue to
+# import through validate_snapshot(). Stage-3-only history is stored in a
+# sidecar that is included in our opaque export and restored on import.
+# ---------------------------------------------------------------------------
+
+def _stage3_empty():
+    return {"revisions": {}, "snapshots": {}, "openings": {},
+            "correction_idempotency": [], "auth_closed": {}}
+
+
+STAGE3_META = _stage3_empty()
+
+
+def _auth_uid(authorization):
+    match = re.fullmatch(r"Bearer ([^\s]+)", authorization or "", re.IGNORECASE)
+    uid = STATE["tokens"].get(match[1]) if match else None
+    if uid is None:
+        fail(401, "unauthenticated")
+    return uid
+
+
+def _parse_instant(value):
+    if not isinstance(value, str) or not value:
+        fail()
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        fail()
+    if parsed.tzinfo is None:
+        fail()
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _strict_after(previous):
+    current = dt.datetime.now(dt.timezone.utc)
+    if previous is not None:
+        prior = _parse_instant(previous)
+        if current <= prior:
+            current = prior + dt.timedelta(microseconds=1)
+    return current.isoformat(timespec="microseconds")
+
+
+def _revision_one(payment):
+    return {"payment_id": payment["payment_id"], "revision": 1,
+            "amount": payment["amount"], "effective_at": payment["created_at"],
+            "recorded_at": payment["created_at"], "reason": "",
+            "correction_batch_id": None}
+
+
+def _ensure_revisions():
+    revisions = STAGE3_META["revisions"]
+    for pid, payment in STATE["payments"].items():
+        if pid not in revisions:
+            revisions[pid] = [_revision_one(payment)]
+    for pid in list(revisions):
+        if pid not in STATE["payments"]:
+            revisions.pop(pid, None)
+    for uid in STATE["users"]:
+        STAGE3_META["openings"].setdefault(uid, 0)
+
+
+def _derive_openings():
+    openings = {uid: user["balance"] for uid, user in STATE["users"].items()}
+    for payment in STATE["payments"].values():
+        value = payment["amount"]
+        openings[payment["from_user_id"]] += value
+        openings[payment["to_user_id"]] -= value
+    return openings
+
+
+def _stage3_reset_meta():
+    global STAGE3_META
+    STAGE3_META = _stage3_empty()
+    STAGE3_META["openings"] = _derive_openings()
+    _ensure_revisions()
+
+
+def _selected_revision(pid, known_at):
+    _ensure_revisions()
+    chosen = None
+    for revision in STAGE3_META["revisions"].get(pid, []):
+        if _parse_instant(revision["recorded_at"]) <= known_at:
+            chosen = revision
+        else:
+            break
+    return chosen
+
+
+def _payment_delta(payment, revision, uid):
+    value = revision["amount"]
+    if payment["from_user_id"] == uid:
+        return -value
+    if payment["to_user_id"] == uid:
+        return value
+    return 0
+
+
+def _historical_total(uid, at, known_at, inclusive=True):
+    _ensure_revisions()
+    total = STAGE3_META["openings"].get(uid, 0)
+    for pid, payment in STATE["payments"].items():
+        revision = _selected_revision(pid, known_at)
+        if revision is None:
+            continue
+        effective = _parse_instant(revision["effective_at"])
+        if effective < at or inclusive and effective == at:
+            total += _payment_delta(payment, revision, uid)
+    return total
+
+
+def _authorization_closed_at(record):
+    aid = record["authorization_id"]
+    known = STAGE3_META["auth_closed"].get(aid)
+    if known is not None:
+        return known
+    if record["status"] == "expired":
+        return record["expires_at"]
+    if record["status"] == "captured" and record.get("payment_ids"):
+        latest = STATE["payments"].get(record["payment_ids"][-1])
+        return latest["created_at"] if latest else None
+    return None
+
+
+def _held_at(uid, at, known_at):
+    held_value = 0
+    for record in STATE["authorizations"].values():
+        if record["from_user_id"] != uid:
+            continue
+        created = _parse_instant(record["created_at"])
+        if created > known_at or created > at:
+            continue
+        remaining = record["amount"]
+        for pid in record.get("payment_ids", []):
+            payment = STATE["payments"].get(pid)
+            if payment is None:
+                continue
+            event = _parse_instant(payment["created_at"])
+            if event <= known_at and event <= at:
+                remaining -= payment["amount"]
+        close_text = _authorization_closed_at(record)
+        if close_text is not None:
+            close = _parse_instant(close_text)
+            # Expiry is knowable once the hold is known. Other lifecycle events
+            # are known at their server-assigned event time.
+            if close_text == record["expires_at"] or close <= known_at:
+                if close <= at:
+                    remaining = 0
+        else:
+            expiry = _parse_instant(record["expires_at"])
+            if expiry <= at:
+                remaining = 0
+        if remaining > 0:
+            held_value += remaining
+    return held_value
+
+
+def _decorate_authorization(value):
+    if isinstance(value, dict) and "authorization_id" in value and "status" in value:
+        result = copy.deepcopy(value)
+        record = STATE["authorizations"].get(value["authorization_id"])
+        result["closed_at"] = _authorization_closed_at(record) if record else None
+        return result
+    return value
+
+
+def _historical_money(uid, at, known_at):
+    total = _historical_total(uid, at, known_at, inclusive=True)
+    hold = _held_at(uid, at, known_at)
+    return total, hold, total - hold
+
+
+def _history_boundaries(extra=None):
+    points = set(extra or [])
+    _ensure_revisions()
+    future = dt.datetime.max.replace(tzinfo=dt.timezone.utc)
+    for pid, payment in STATE["payments"].items():
+        revision = _selected_revision(pid, future)
+        if revision is not None:
+            points.add(_parse_instant(revision["effective_at"]))
+    for record in STATE["authorizations"].values():
+        points.add(_parse_instant(record["created_at"]))
+        points.add(_parse_instant(record["expires_at"]))
+        closed = _authorization_closed_at(record)
+        if closed:
+            points.add(_parse_instant(closed))
+        for pid in record.get("payment_ids", []):
+            if pid in STATE["payments"]:
+                points.add(_parse_instant(STATE["payments"][pid]["created_at"]))
+    return sorted(points)
+
+
+def _history_nonnegative(known_at, extra=None):
+    for boundary in _history_boundaries(extra):
+        for uid in STATE["users"]:
+            total = _historical_total(uid, boundary, known_at, inclusive=True)
+            if total < 0 or total - _held_at(uid, boundary, known_at) < 0:
+                return False
+    return True
+
+
+def _idempotency_lookup(store, uid, path, key, body):
+    if key is None or key == "":
+        fail(400, "missing_idempotency_key")
+    if not isinstance(key, str) or len(key) > 255:
+        fail()
+    body_value = canonical(body)
+    for entry in store:
+        if (entry["user_id"], entry["path"], entry["key"]) == (uid, path, key):
+            if entry["body"] != body_value:
+                fail(409, "idempotency_key_reuse")
+            return copy.deepcopy(entry["response"])
+    return None
+
+
+def _idempotency_store(store, uid, path, key, body, response):
+    store.append({"user_id": uid, "path": path, "key": key,
+                  "body": canonical(body), "response": copy.deepcopy(response)})
+
+
+def _statement(uid, query):
+    _ensure_revisions()
+    if "snapshot" in query:
+        if any(name in query for name in ("from", "to", "known_at")):
+            fail()
+        token = query.get("snapshot", [""])[0]
+        snap = STAGE3_META["snapshots"].get(token)
+        if snap is None or snap["user_id"] != uid:
+            fail(404, "not_found")
+        limit, offset = pagination(query)
+        full = copy.deepcopy(snap["response"])
+        entries = full["entries"]
+        full["entries"] = entries[offset:offset + limit]
+        full["has_more"] = offset + limit < len(entries)
+        return full
+
+    read_at = dt.datetime.now(dt.timezone.utc)
+    known_text = query.get("known_at", [None])[0]
+    known_at = _parse_instant(known_text) if known_text is not None else read_at
+    from_text = query.get("from", [None])[0]
+    to_text = query.get("to", [None])[0]
+    start = _parse_instant(from_text) if from_text is not None else dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+    end = _parse_instant(to_text) if to_text is not None else read_at
+    if start > end:
+        fail()
+    limit, offset = pagination(query)
+
+    opening = _historical_total(uid, start, known_at, inclusive=False)
+    closing = _historical_total(uid, end, known_at, inclusive=False)
+    selected = []
+    for pid, payment in STATE["payments"].items():
+        if uid not in (payment["from_user_id"], payment["to_user_id"]):
+            continue
+        revision = _selected_revision(pid, known_at)
+        if revision is None:
+            continue
+        effective = _parse_instant(revision["effective_at"])
+        if start <= effective < end:
+            selected.append((effective, pid, payment, revision))
+    selected.sort(key=lambda item: (item[0], item[1]))
+
+    running = opening
+    entries = []
+    for _, _, payment, revision in selected:
+        delta = _payment_delta(payment, revision, uid)
+        running += delta
+        view = copy.deepcopy(payment)
+        view["amount"] = revision["amount"]
+        entries.append({"payment": view, "delta": delta, "balance_after": running,
+                        "revision": revision["revision"], "effective_at": revision["effective_at"],
+                        "recorded_at": revision["recorded_at"]})
+
+    token = identifier("snap_")
+    response = {"opening_balance": opening, "entries": entries, "closing_balance": closing,
+                "has_more": offset + limit < len(entries), "snapshot": token}
+    if known_text is not None:
+        response["known_at"] = known_text
+    STAGE3_META["snapshots"][token] = {"user_id": uid, "response": copy.deepcopy(response)}
+    response["entries"] = entries[offset:offset + limit]
+    return response
+
+
+def _correction(uid, path, body, key):
+    match = re.fullmatch(r"/payments/([^/]+)/corrections", path)
+    if match is None:
+        fail(404, "not_found")
+    payment = STATE["payments"].get(match[1])
+    if payment is None:
+        fail(404, "not_found")
+    if payment["from_user_id"] != uid:
+        fail(403, "forbidden")
+    if payment.get("settlement_id") is not None or payment.get("authorization_id") is not None:
+        fail(422, "linked_payment_immutable")
+
+    replay = _idempotency_lookup(STAGE3_META["correction_idempotency"], uid, path, key, body)
+    if replay is not None:
+        return 200, replay
+
+    if set(("expected_revision", "amount", "effective_at", "reason")) - set(body):
+        fail()
+    expected = integer(body.get("expected_revision"), 1, 1000000000)
+    corrected_amount = integer(body.get("amount"), 0, 1000000000)
+    effective_text = body.get("effective_at")
+    effective = _parse_instant(effective_text)
+    request_now = dt.datetime.now(dt.timezone.utc)
+    if effective > request_now:
+        fail()
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not 1 <= len(reason) <= 200:
+        fail()
+
+    _ensure_revisions()
+    history = STAGE3_META["revisions"][payment["payment_id"]]
+    latest = history[-1]
+    if expected != latest["revision"]:
+        fail(409, "stale_revision")
+    difference = corrected_amount - latest["amount"]
+    sender = STATE["users"][payment["from_user_id"]]
+    receiver = STATE["users"][payment["to_user_id"]]
+    if difference > 0:
+        if available(STATE, sender["id"]) < difference:
+            fail(409, "insufficient_funds")
+        if receiver["balance"] + difference > MAX_BALANCE:
+            fail()
+    elif difference < 0:
+        debit = -difference
+        if available(STATE, receiver["id"]) < debit:
+            fail(409, "insufficient_funds")
+        if sender["balance"] + debit > MAX_BALANCE:
+            fail()
+
+    recorded = _strict_after(latest["recorded_at"])
+    revision = {"payment_id": payment["payment_id"], "revision": latest["revision"] + 1,
+                "amount": corrected_amount, "effective_at": effective_text,
+                "recorded_at": recorded, "reason": reason, "correction_batch_id": None}
+    history.append(revision)
+    known_at = _parse_instant(recorded)
+    if not _history_nonnegative(known_at, [effective]):
+        history.pop()
+        fail(409, "historical_overdraft")
+
+    if difference > 0:
+        sender["balance"] -= difference
+        receiver["balance"] += difference
+    elif difference < 0:
+        debit = -difference
+        receiver["balance"] -= debit
+        sender["balance"] += debit
+
+    response = copy.deepcopy(revision)
+    _idempotency_store(STAGE3_META["correction_idempotency"], uid, path, key, body, response)
+    return 201, response
+
+
+def _sync_stage3_after(method, path, response):
+    _ensure_revisions()
+    if method == "POST":
+        action = re.fullmatch(r"/authorizations/([^/]+)/(capture|void)", path)
+        if action:
+            record = STATE["authorizations"].get(action[1])
+            if record is not None and record["status"] in {"captured", "voided"}:
+                STAGE3_META["auth_closed"].setdefault(record["authorization_id"], now())
+    if path == "/authorizations":
+        if isinstance(response, dict) and "authorizations" in response:
+            response = copy.deepcopy(response)
+            response["authorizations"] = [_decorate_authorization(item) for item in response["authorizations"]]
+        else:
+            response = _decorate_authorization(response)
+    else:
+        action = re.fullmatch(r"/authorizations/([^/]+)/(capture|void)", path)
+        if action and isinstance(response, dict) and "authorization_id" in response:
+            response = _decorate_authorization(response)
+    return response
+
+
+def dispatch(method, path, query, body, authorization, key):
+    global STATE, STAGE3_META
+
+    if method == "POST" and path == "/_test/reset":
+        status, response = stage2_dispatch(method, path, query, body, authorization, key)
+        _stage3_reset_meta()
+        return status, response
+
+    if method == "GET" and path == "/_test/export":
+        status, response = stage2_dispatch(method, path, query, body, authorization, key)
+        response = copy.deepcopy(response)
+        response["stage3_meta"] = copy.deepcopy(STAGE3_META)
+        return status, response
+
+    if method == "POST" and path == "/_test/import":
+        status, response = stage2_dispatch(method, path, query, body, authorization, key)
+        meta = body.get("stage3_meta")
+        if isinstance(meta, dict) and all(name in meta for name in _stage3_empty()):
+            STAGE3_META = copy.deepcopy(meta)
+            # Snapshot tokens are intentionally restored for a same-team Stage-3
+            # export imported by Stage 4.
+            _ensure_revisions()
+        else:
+            _stage3_reset_meta()
+        return status, response
+
+    correction_match = method == "POST" and re.fullmatch(r"/payments/[^/]+/corrections", path)
+    if correction_match:
+        uid = _auth_uid(authorization)
+        return _correction(uid, path, body, key)
+
+    revisions_match = method == "GET" and re.fullmatch(r"/payments/[^/]+/revisions", path)
+    if revisions_match:
+        uid = _auth_uid(authorization)
+        pid = path.split("/")[2]
+        payment = STATE["payments"].get(pid)
+        if payment is None or uid not in (payment["from_user_id"], payment["to_user_id"]):
+            fail(404, "not_found")
+        _ensure_revisions()
+        return 200, {"revisions": copy.deepcopy(STAGE3_META["revisions"][pid])}
+
+    if method == "GET" and path == "/statement":
+        uid = _auth_uid(authorization)
+        return 200, _statement(uid, query)
+
+    if method == "GET" and path == "/me" and ("as_of" in query or "known_at" in query):
+        uid = _auth_uid(authorization)
+        request_at = dt.datetime.now(dt.timezone.utc)
+        as_text = query.get("as_of", [None])[0]
+        known_text = query.get("known_at", [None])[0]
+        as_of = _parse_instant(as_text) if as_text is not None else request_at
+        known_at = _parse_instant(known_text) if known_text is not None else request_at
+        user = STATE["users"][uid]
+        total, hold, spendable = _historical_money(uid, as_of, known_at)
+        result = {"user_id": uid, "display_name": user["display_name"], "handle": user["handle"],
+                  "balance": total, "total": total, "available": spendable, "held": hold,
+                  "currency": STATE["currency"], "minor_units": STATE["minor_units"]}
+        if as_text is not None:
+            result["as_of"] = as_text
+        if known_text is not None:
+            result["known_at"] = known_text
+        return 200, result
+
+    status, response = stage2_dispatch(method, path, query, body, authorization, key)
+    response = _sync_stage3_after(method, path, response)
+    return status, response
 
 
 class Handler(BaseHTTPRequestHandler):
