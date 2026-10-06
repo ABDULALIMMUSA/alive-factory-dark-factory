@@ -1,5 +1,8 @@
 # Pocketful: the result of a six-seat software factory
 
+> **Live 3D factory demo:** https://alive-factory-demo-production.up.railway.app  
+> Enter the WebGL factory, orbit the six worker agents, and press **Replay Stage 1** to watch the recorded `BUILD → CHALLENGE → REJECT → REPAIR → PROVE → SHIP` evidence loop become a physical production line. Demo source: [`demo/`](demo/).
+
 Owner: ABDULALIM MUSA. Track: **Pocketful**, the Dark Factory challenge's wallet and payments service. Six Band coding-agent seats built, challenged, repaired and reviewed the work in a shared production room.
 
 **Stage 1 is independently accepted and shipped. Stage 2 is a buildable, tested candidate with an unresolved contract failure; it is not accepted or shipped.** Stage 3 and Stage 4 were not implemented. Submission packaging is separate from product acceptance.
