@@ -1384,10 +1384,82 @@ def _history_boundaries(extra=None):
 
 
 def _history_nonnegative(known_at, extra=None):
-    for boundary in _history_boundaries(extra):
-        for uid in STATE["users"]:
-            total = _historical_total(uid, boundary, known_at, inclusive=True)
-            if total < 0 or total - _held_at(uid, boundary, known_at) < 0:
+    """Validate historical total/available with a grouped event sweep.
+
+    Grouping all effects at the same instant is required by the contract and is
+    substantially faster than recomputing every wallet from the whole ledger at
+    every boundary.
+    """
+    _ensure_revisions()
+    total = {uid: STAGE3_META["openings"].get(uid, 0) for uid in STATE["users"]}
+    held_now = {uid: 0 for uid in STATE["users"]}
+    events = {}
+
+    def add_event(instant_value, uid, total_delta=0, held_delta=0):
+        if instant_value > known_at:
+            return
+        bucket = events.setdefault(instant_value, {})
+        values = bucket.setdefault(uid, [0, 0])
+        values[0] += total_delta
+        values[1] += held_delta
+
+    # Selected payment revisions are the only historical total movements.
+    for pid, payment in STATE["payments"].items():
+        revision = _selected_revision(pid, known_at)
+        if revision is None:
+            continue
+        when = _parse_instant(revision["effective_at"])
+        value = revision["amount"]
+        add_event(when, payment["from_user_id"], total_delta=-value)
+        add_event(when, payment["to_user_id"], total_delta=value)
+
+    # Holds change available rather than total. Seeded already-closed holds are
+    # explicitly history-free; API-created/imported lifecycle events are replayed.
+    for record in STATE["authorizations"].values():
+        payer = record["from_user_id"]
+        created = _parse_instant(record["created_at"])
+        if created > known_at:
+            continue
+        if record.get("seeded") and record["status"] != "open":
+            continue
+
+        add_event(created, payer, held_delta=record["amount"])
+        captured = 0
+        for pid in record.get("payment_ids", []):
+            payment = STATE["payments"].get(pid)
+            if payment is None:
+                continue
+            when = _parse_instant(payment["created_at"])
+            if when <= known_at:
+                value = payment["amount"]
+                captured += value
+                add_event(when, payer, held_delta=-value)
+
+        remainder = max(0, record["amount"] - captured)
+        close_text = _authorization_closed_at(record)
+        if close_text is not None:
+            close = _parse_instant(close_text)
+            # Expiry is knowable from creation; capture/void closure is known at
+            # its own event time.
+            if close_text == record["expires_at"] or close <= known_at:
+                add_event(close, payer, held_delta=-remainder)
+        elif record["status"] == "open":
+            expiry = _parse_instant(record["expires_at"])
+            add_event(expiry, payer, held_delta=-remainder)
+
+    # Include explicitly requested boundaries even if no movement occurs there.
+    for boundary in extra or []:
+        if boundary <= known_at:
+            events.setdefault(boundary, {})
+
+    if any(value < 0 for value in total.values()):
+        return False
+    for when in sorted(events):
+        for uid, (total_delta, held_delta) in events[when].items():
+            total[uid] += total_delta
+            held_now[uid] += held_delta
+        for uid in total:
+            if total[uid] < 0 or held_now[uid] < 0 or total[uid] - held_now[uid] < 0:
                 return False
     return True
 
