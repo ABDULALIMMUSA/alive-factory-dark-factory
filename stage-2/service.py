@@ -15,6 +15,26 @@ from urllib.parse import urlsplit, parse_qs
 
 MAX_BALANCE = 2 ** 53
 LOCK = threading.RLock()
+REQUEST_CLOCK = threading.local()
+CLOCK_LOCK = threading.Lock()
+LAST_CLOCK = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+
+
+def _next_request_clock():
+    global LAST_CLOCK
+    current = request_clock()
+    with CLOCK_LOCK:
+        if current <= LAST_CLOCK:
+            current = LAST_CLOCK + dt.timedelta(microseconds=1)
+        LAST_CLOCK = current
+    return current
+
+
+def request_clock():
+    current = getattr(REQUEST_CLOCK, "value", None)
+    return current if current is not None else _next_request_clock()
+
+
 HANDLE = re.compile(r"[a-z0-9_]{1,20}\Z")
 EMAIL = re.compile(r"[^\s@]+@[^\s@]+\Z")
 STATUSES = {"pending", "paid", "declined", "cancelled"}
@@ -73,7 +93,7 @@ def fail(status=422, code="validation_failed", message="Invalid request"):
 
 
 def now():
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="microseconds")
+    return request_clock().isoformat(timespec="microseconds")
 
 
 def identifier(prefix):
@@ -630,7 +650,7 @@ def authorization_view(record):
 
 
 def expire(state):
-    clock = dt.datetime.now(dt.timezone.utc)
+    clock = request_clock()
     for record in state["authorizations"].values():
         if record["status"] == "open" and instant(record["expires_at"]) <= clock:
             record["status"] = "expired"
@@ -1114,6 +1134,9 @@ class Handler(BaseHTTPRequestHandler):
         pass  # Do not log bearer tokens, passwords, or private test snapshots.
 
     def handle_api(self):
+        # One monotonic UTC clock read per HTTP request. All timestamps and
+        # expiry decisions inside this request derive from this exact instant.
+        REQUEST_CLOCK.value = _next_request_clock()
         try:
             path = urlsplit(self.path).path
             if self.command == "GET" and (path in {"/", "/split", "/signup", "/login"} or path in {"/requests", "/authorizations"} and "text/html" in self.headers.get("Accept", "")):
