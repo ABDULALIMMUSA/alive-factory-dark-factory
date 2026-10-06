@@ -1402,7 +1402,7 @@ def _correction(uid, path, body, key):
         fail(404, "not_found")
     if payment["from_user_id"] != uid:
         fail(403, "forbidden")
-    if payment.get("settlement_id") is not None or payment.get("authorization_id") is not None:
+    if payment.get("settlement_id") is not None or payment.get("authorization_id") is not None or _stage4_is_refund(payment["payment_id"]):
         fail(422, "linked_payment_immutable")
 
     replay = _idempotency_lookup(STAGE3_META["correction_idempotency"], uid, path, key, body)
@@ -1413,6 +1413,8 @@ def _correction(uid, path, body, key):
         fail()
     expected = integer(body.get("expected_revision"), 1, 1000000000)
     corrected_amount = integer(body.get("amount"), 0, 1000000000)
+    if _stage4_refunded_total(payment["payment_id"]) > corrected_amount:
+        fail(422, "refund_exceeds_payment")
     effective_text = body.get("effective_at")
     effective = _parse_instant(effective_text)
     request_now = dt.datetime.now(dt.timezone.utc)
@@ -1486,7 +1488,7 @@ def _sync_stage3_after(method, path, response):
     return response
 
 
-def dispatch(method, path, query, body, authorization, key):
+def stage3_dispatch(method, path, query, body, authorization, key):
     global STATE, STAGE3_META
 
     if method == "POST" and path == "/_test/reset":
@@ -1552,6 +1554,258 @@ def dispatch(method, path, query, body, authorization, key):
     status, response = stage2_dispatch(method, path, query, body, authorization, key)
     response = _sync_stage3_after(method, path, response)
     return status, response
+
+
+# ---------------------------------------------------------------------------
+# Stage 4: refunds and atomic correction batches.
+# Stage-4-only links/idempotency are kept in a sidecar so Stage-1/2/3 opaque
+# exports remain import-compatible without changing the Stage-2 ledger schema.
+# ---------------------------------------------------------------------------
+
+def _stage4_empty():
+    return {"refund_of": {}, "refund_idempotency": [], "batch_idempotency": [],
+            "correction_batches": {}}
+
+
+STAGE4_META = _stage4_empty()
+
+
+def _stage4_is_refund(payment_id):
+    return payment_id in STAGE4_META["refund_of"]
+
+
+def _stage4_refunded_total(payment_id):
+    total = 0
+    for refund_id, target in STAGE4_META["refund_of"].items():
+        if target == payment_id and refund_id in STATE["payments"]:
+            total += STATE["payments"][refund_id]["amount"]
+    return total
+
+
+def _stage4_current_amount(payment_id):
+    _ensure_revisions()
+    history = STAGE3_META["revisions"].get(payment_id)
+    return history[-1]["amount"] if history else STATE["payments"][payment_id]["amount"]
+
+
+def _decorate_payment_stage4(value):
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            result[key] = _decorate_payment_stage4(item)
+        if "payment_id" in value and "from_user_id" in value and "to_user_id" in value:
+            result["refund_of"] = STAGE4_META["refund_of"].get(value["payment_id"])
+        return result
+    if isinstance(value, list):
+        return [_decorate_payment_stage4(item) for item in value]
+    return copy.deepcopy(value)
+
+
+def _stage4_refund(uid, path, body, key):
+    match = re.fullmatch(r"/payments/([^/]+)/refunds", path)
+    if match is None:
+        fail(404, "not_found")
+    target_id = match[1]
+    target = STATE["payments"].get(target_id)
+    if target is None:
+        fail(404, "not_found")
+    if _stage4_is_refund(target_id):
+        fail(422, "invalid_refund_target")
+    if target["to_user_id"] != uid:
+        fail(403, "forbidden")
+
+    replay = _idempotency_lookup(STAGE4_META["refund_idempotency"], uid, path, key, body)
+    if replay is not None:
+        return 200, _decorate_payment_stage4(replay)
+
+    value = amount(body)
+    if _stage4_refunded_total(target_id) + value > _stage4_current_amount(target_id):
+        fail(422, "refund_exceeds_payment")
+
+    payer = STATE["users"][target["to_user_id"]]
+    receiver = STATE["users"][target["from_user_id"]]
+    if available(STATE, payer["id"]) < value:
+        fail(409, "insufficient_funds")
+    if receiver["balance"] + value > MAX_BALANCE:
+        fail()
+
+    record = payment_record(STATE, payer, receiver, value, target["note"], target["visibility"],
+                            timestamp=now())
+    # Refunds are independent payments and never relink requests/authorizations/settlements.
+    record["request_id"] = None
+    record["settlement_id"] = None
+    record["authorization_id"] = None
+
+    payer["balance"] -= value
+    receiver["balance"] += value
+    STATE["payments"][record["payment_id"]] = record
+    STAGE4_META["refund_of"][record["payment_id"]] = target_id
+    _ensure_revisions()
+
+    response = _decorate_payment_stage4(record)
+    _idempotency_store(STAGE4_META["refund_idempotency"], uid, path, key, body, response)
+    return 201, response
+
+
+def _stage4_batch_item(raw):
+    if not isinstance(raw, dict):
+        fail()
+    required = {"payment_id", "expected_revision", "amount", "effective_at", "reason"}
+    if not required.issubset(raw):
+        fail()
+    pid = raw.get("payment_id")
+    if not isinstance(pid, str):
+        fail()
+    payment = STATE["payments"].get(pid)
+    if payment is None:
+        fail(404, "not_found")
+    if payment.get("authorization_id") is not None or _stage4_is_refund(pid):
+        fail(422, "linked_payment_immutable")
+    expected = integer(raw.get("expected_revision"), 1, 1000000000)
+    corrected = integer(raw.get("amount"), 0, 1000000000)
+    if _stage4_refunded_total(pid) > corrected:
+        fail(422, "refund_exceeds_payment")
+    effective_text = raw.get("effective_at")
+    effective = _parse_instant(effective_text)
+    if effective > dt.datetime.now(dt.timezone.utc):
+        fail()
+    reason = raw.get("reason")
+    if not isinstance(reason, str) or not 1 <= len(reason) <= 200:
+        fail()
+    _ensure_revisions()
+    latest = STAGE3_META["revisions"][pid][-1]
+    if expected != latest["revision"]:
+        fail(409, "stale_revision")
+    return {"payment": payment, "pid": pid, "latest": latest, "amount": corrected,
+            "effective_at": effective_text, "effective": effective, "reason": reason}
+
+
+def _stage4_batch(uid, body, key):
+    if uid not in STATE["operators"]:
+        fail(403, "forbidden")
+
+    replay = _idempotency_lookup(STAGE4_META["batch_idempotency"], uid, "/correction-batches", key, body)
+    if replay is not None:
+        return 200, copy.deepcopy(replay)
+
+    raw_items = body.get("corrections")
+    if not isinstance(raw_items, list) or not 1 <= len(raw_items) <= 32:
+        fail()
+    ids = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            fail()
+        ids.append(raw.get("payment_id"))
+    if any(not isinstance(pid, str) for pid in ids) or len(set(ids)) != len(ids):
+        fail()
+
+    # Per-item validation/error precedence is input order.
+    items = [_stage4_batch_item(raw) for raw in raw_items]
+    included = set(ids)
+
+    # Settlement completeness and shared effective instant.
+    settlements = {}
+    for item in items:
+        sid = item["payment"].get("settlement_id")
+        if sid is not None:
+            settlements.setdefault(sid, []).append(item)
+    for sid, members in settlements.items():
+        settlement = STATE["settlements"].get(sid)
+        if settlement is None:
+            fail(422, "incomplete_settlement")
+        member_ids = {p["payment_id"] for p in settlement["payments"]}
+        if not member_ids.issubset(included):
+            fail(422, "incomplete_settlement")
+        instants = {_parse_instant(item["effective_at"]) for item in members}
+        if len(instants) != 1:
+            fail()
+
+    # Compute one atomic current-balance change for the whole batch.
+    deltas = {}
+    for item in items:
+        payment, latest = item["payment"], item["latest"]
+        diff = item["amount"] - latest["amount"]
+        if diff:
+            deltas[payment["from_user_id"]] = deltas.get(payment["from_user_id"], 0) - diff
+            deltas[payment["to_user_id"]] = deltas.get(payment["to_user_id"], 0) + diff
+
+    proposed_balances = {uid2: user["balance"] + deltas.get(uid2, 0)
+                         for uid2, user in STATE["users"].items()}
+    for uid2, balance in proposed_balances.items():
+        if balance < held(STATE, uid2):
+            fail(409, "insufficient_funds")
+        if balance > MAX_BALANCE:
+            fail()
+
+    # All revisions in one batch share a single recorded_at strictly later than
+    # the prior revision of every member.
+    recorded_dt = dt.datetime.now(dt.timezone.utc)
+    for item in items:
+        prior = _parse_instant(item["latest"]["recorded_at"])
+        if recorded_dt <= prior:
+            recorded_dt = prior + dt.timedelta(microseconds=1)
+    recorded = recorded_dt.isoformat(timespec="microseconds")
+    batch_id = identifier("cb_")
+
+    revisions = []
+    for item in items:
+        latest = item["latest"]
+        revision = {"payment_id": item["pid"], "revision": latest["revision"] + 1,
+                    "amount": item["amount"], "effective_at": item["effective_at"],
+                    "recorded_at": recorded, "reason": item["reason"],
+                    "correction_batch_id": batch_id}
+        STAGE3_META["revisions"][item["pid"]].append(revision)
+        revisions.append(revision)
+
+    if not _history_nonnegative(_parse_instant(recorded), [item["effective"] for item in items]):
+        for item in items:
+            STAGE3_META["revisions"][item["pid"]].pop()
+        fail(409, "historical_overdraft")
+
+    for uid2, balance in proposed_balances.items():
+        STATE["users"][uid2]["balance"] = balance
+
+    response = {"correction_batch_id": batch_id, "recorded_at": recorded,
+                "revisions": copy.deepcopy(revisions)}
+    STAGE4_META["correction_batches"][batch_id] = copy.deepcopy(response)
+    _idempotency_store(STAGE4_META["batch_idempotency"], uid, "/correction-batches", key, body, response)
+    return 201, response
+
+
+def dispatch(method, path, query, body, authorization, key):
+    global STAGE4_META
+
+    if method == "POST" and path == "/_test/reset":
+        status, response = stage3_dispatch(method, path, query, body, authorization, key)
+        STAGE4_META = _stage4_empty()
+        return status, response
+
+    if method == "GET" and path == "/_test/export":
+        status, response = stage3_dispatch(method, path, query, body, authorization, key)
+        response = copy.deepcopy(response)
+        response["stage4_meta"] = copy.deepcopy(STAGE4_META)
+        return status, response
+
+    if method == "POST" and path == "/_test/import":
+        status, response = stage3_dispatch(method, path, query, body, authorization, key)
+        meta = body.get("stage4_meta")
+        if isinstance(meta, dict) and all(name in meta for name in _stage4_empty()):
+            STAGE4_META = copy.deepcopy(meta)
+        else:
+            STAGE4_META = _stage4_empty()
+        return status, response
+
+    if method == "POST" and re.fullmatch(r"/payments/[^/]+/refunds", path):
+        uid = _auth_uid(authorization)
+        return _stage4_refund(uid, path, body, key)
+
+    if method == "POST" and path == "/correction-batches":
+        uid = _auth_uid(authorization)
+        status, response = _stage4_batch(uid, body, key)
+        return status, copy.deepcopy(response)
+
+    status, response = stage3_dispatch(method, path, query, body, authorization, key)
+    return status, _decorate_payment_stage4(response)
 
 
 class Handler(BaseHTTPRequestHandler):
