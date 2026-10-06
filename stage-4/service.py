@@ -15,6 +15,26 @@ from urllib.parse import urlsplit, parse_qs
 
 MAX_BALANCE = 2 ** 53
 LOCK = threading.RLock()
+REQUEST_CLOCK = threading.local()
+CLOCK_LOCK = threading.Lock()
+LAST_CLOCK = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+
+
+def _next_request_clock():
+    global LAST_CLOCK
+    current = request_clock()
+    with CLOCK_LOCK:
+        if current <= LAST_CLOCK:
+            current = LAST_CLOCK + dt.timedelta(microseconds=1)
+        LAST_CLOCK = current
+    return current
+
+
+def request_clock():
+    current = getattr(REQUEST_CLOCK, "value", None)
+    return current if current is not None else _next_request_clock()
+
+
 HANDLE = re.compile(r"[a-z0-9_]{1,20}\Z")
 EMAIL = re.compile(r"[^\s@]+@[^\s@]+\Z")
 STATUSES = {"pending", "paid", "declined", "cancelled"}
@@ -73,7 +93,7 @@ def fail(status=422, code="validation_failed", message="Invalid request"):
 
 
 def now():
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="microseconds")
+    return request_clock().isoformat(timespec="microseconds")
 
 
 def identifier(prefix):
@@ -630,7 +650,7 @@ def authorization_view(record):
 
 
 def expire(state):
-    clock = dt.datetime.now(dt.timezone.utc)
+    clock = request_clock()
     for record in state["authorizations"].values():
         if record["status"] == "open" and instant(record["expires_at"]) <= clock:
             record["status"] = "expired"
@@ -1225,7 +1245,7 @@ def _stage3_reset_meta():
     STAGE3_META = _stage3_empty()
     STAGE3_META["openings"] = _derive_openings()
     _ensure_revisions()
-    reset_clock = dt.datetime.now(dt.timezone.utc)
+    reset_clock = request_clock()
     for aid, record in STATE["authorizations"].items():
         status = record["status"]
         if status == "captured":
@@ -1407,7 +1427,7 @@ def _statement(uid, query):
         full["has_more"] = offset + limit < len(entries)
         return full
 
-    read_at = dt.datetime.now(dt.timezone.utc)
+    read_at = request_clock()
     known_text = query.get("known_at", [None])[0]
     known_at = _parse_instant(known_text) if known_text is not None else read_at
     from_text = query.get("from", [None])[0]
@@ -1471,7 +1491,7 @@ def _correction(uid, path, body, key):
     corrected_amount = integer(body.get("amount"), 0, 1000000000)
     effective_text = body.get("effective_at")
     effective = _parse_instant(effective_text)
-    request_now = dt.datetime.now(dt.timezone.utc)
+    request_now = request_clock()
     if effective > request_now:
         fail()
     reason = body.get("reason")
@@ -1608,7 +1628,7 @@ def stage3_dispatch(method, path, query, body, authorization, key):
 
     if method == "GET" and path == "/me" and ("as_of" in query or "known_at" in query):
         uid = _auth_uid(authorization)
-        request_at = dt.datetime.now(dt.timezone.utc)
+        request_at = request_clock()
         as_text = query.get("as_of", [None])[0]
         known_text = query.get("known_at", [None])[0]
         as_of = _parse_instant(as_text) if as_text is not None else request_at
@@ -1734,7 +1754,7 @@ def _stage4_batch_item(raw):
     corrected = integer(raw.get("amount"), 0, 1000000000)
     effective_text = raw.get("effective_at")
     effective = _parse_instant(effective_text)
-    if effective > dt.datetime.now(dt.timezone.utc):
+    if effective > request_clock():
         fail()
     reason = raw.get("reason")
     if not isinstance(reason, str) or not 1 <= len(reason) <= 200:
@@ -1816,7 +1836,7 @@ def _stage4_batch(uid, body, key):
 
     # All revisions in one batch share a single recorded_at strictly later than
     # the prior revision of every member.
-    recorded_dt = dt.datetime.now(dt.timezone.utc)
+    recorded_dt = request_clock()
     for item in items:
         prior = _parse_instant(item["latest"]["recorded_at"])
         if recorded_dt <= prior:
@@ -1890,6 +1910,9 @@ class Handler(BaseHTTPRequestHandler):
         pass  # Do not log bearer tokens, passwords, or private test snapshots.
 
     def handle_api(self):
+        # One monotonic UTC clock read per HTTP request. All timestamps and
+        # expiry decisions inside this request derive from this exact instant.
+        REQUEST_CLOCK.value = _next_request_clock()
         try:
             path = urlsplit(self.path).path
             if self.command == "GET" and (path in {"/", "/split", "/signup", "/login"} or path in {"/requests", "/authorizations"} and "text/html" in self.headers.get("Accept", "")):
